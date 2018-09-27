@@ -1,5 +1,5 @@
 [[package]]
-name = "acyclic"
+name = "dependent_traits"
 version = "0.1.0"
 dependencies = [
  "frunk 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",

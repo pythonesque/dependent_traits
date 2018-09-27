@@ -1,5 +1,5 @@
 [package]
-name = "acyclic"
+name = "dependent_traits"
 version = "0.1.0"
 authors = ["Joshua Yanovski <pythonesque@gmail.com>"]
 
