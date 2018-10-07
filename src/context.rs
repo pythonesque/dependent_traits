@@ -3,8 +3,22 @@ use std::ops::Add;
 use frunk::{Generic, LabelledGeneric};
 use frunk::hlist::{HCons, HList, HNil, LiftFrom, Selector};
 use frunk::indices::{Here, There};
+use frunk::traits::{IntoReverse};
 // use frunk::prelude::*;
 
+pub struct Inl<L> {
+    l: L,
+}
+
+pub struct Inr<R> {
+    r: R,
+}
+
+pub struct TSome<T> {
+    t: T,
+}
+
+pub struct TNone;
 
 pub trait AtIndex<Index>/* : Selector<Self::Output, Index>*/
 {
@@ -24,6 +38,28 @@ impl<Head, Tail, TailIndex> AtIndex<There<TailIndex>> for HCons<Head, Tail>
     type Output = Tail::Output;
 }
 
+/// Version of AtIndex that returns None on failure.
+pub trait AtIndexOpt<Index>/* : Selector<Self::Output, Index>*/
+{
+    type Output;
+}
+
+impl<Head, Tail> AtIndexOpt<Here> for HCons<Head, Tail> {
+    type Output = TSome<Head>;
+    // fn select(&self) -> Selector<Output, Tail>
+    // type Selector : Selector<, >;
+}
+
+impl<TailIndex> AtIndexOpt<There<TailIndex>> for HNil {
+    type Output = TNone;
+}
+
+impl<Head, Tail, TailIndex> AtIndexOpt<There<TailIndex>> for HCons<Head, Tail>
+    where Tail : AtIndexOpt<TailIndex>
+{
+    type Output = Tail::Output;
+}
+
 /// Note: Here represents 0 and There K represents K.
 pub trait PeanoLen {
     type PeanoLen;
@@ -39,7 +75,412 @@ impl<Head, Tail> PeanoLen for HCons<Head, Tail>
     type PeanoLen = There<Tail::PeanoLen>;
 }
 
-    //Selector<FromTail, There<TailIndex>> for HCons<Head, Tail> 
+pub trait IAdd<RHS> {
+    type Output;
+}
+
+impl<M> IAdd<Here> for M {
+    type Output = There<M>;
+
+    /* fn add(self, rhs: Here) -> Self::Output {
+        self
+    } */
+}
+
+impl<M, N> IAdd<There<N>> for M
+    where M : IAdd<N>
+{
+    type Output = There<<M as IAdd<N>>::Output>;
+
+    /* fn add(self, rhs: There<M>) -> There<<Rel<M> as Add<N>>::Output>
+        //Self::Output
+    {
+        // NOTE: Shouldn't really require unsafe (should be able to
+        // construct it Peano-style as { There : rhs.there.add() }...
+        // but we don't have access to the module.
+        unsafe { mem::transmute(self) }
+    } */
+}
+
+/// NOTE: For ISub purposes, Here means 0, not 1!
+pub trait ISub<RHS> {
+    type Output;
+}
+
+impl<M> ISub<Here> for M {
+    type Output = M;
+}
+
+impl<N> ISub<There<N>> for Here {
+    type Output = Here;
+}
+
+impl<M, N> ISub<There<N>> for There<M>
+    where M : ISub<N>
+{
+    type Output = <M as ISub<N>>::Output;
+}
+
+/// Lifting
+
+pub struct ElId;
+
+/// lift of N, then apply lift Lift
+pub struct ElShift<Lift, N> {
+    l: Lift,
+    n: N,
+}
+
+/// apply Lift to de bruijn > N
+pub struct ElLift<N, Lift> {
+    n: N,
+    l: Lift,
+}
+
+/// Copmose a relocation of magnitude N
+pub trait EShiftRec<N> {
+    type Output;
+}
+
+impl<N, El, K> EShiftRec<N> for ElShift<El, K>
+    where K: IAdd<N>,
+          El : EShiftRec<<K as IAdd<N>>::Output>,
+{
+    type Output = <El as EShiftRec<<K as IAdd<N>>::Output>>::Output;
+}
+
+impl<N> EShiftRec<N> for ElId {
+    type Output = ElShift<ElId, N>;
+}
+
+impl<N, K, El> EShiftRec<N> for ElLift<K, El> {
+    type Output = ElShift<ElLift<K, El>, N>;
+}
+
+/// Copmose a relocation of magnitude Pred<N>
+pub trait EShift<N> {
+    type Output;
+}
+
+impl<El> EShift<Here> for El {
+    type Output = El;
+}
+
+impl<El, N> EShift<There<N>> for El where El: EShiftRec<N> {
+    type Output = <El as EShiftRec<N>>::Output;
+}
+
+/// Cross N binders
+pub trait ELiftRec<N> {
+    type Output;
+}
+
+impl<N> ELiftRec<N> for ElId {
+    type Output = ElId;
+}
+
+impl<N, K, El> ELiftRec<N> for ElLift<K, El>
+    where K: IAdd<N>,
+          El : ELiftRec<<K as IAdd<N>>::Output>,
+{
+    type Output = <El as ELiftRec<<K as IAdd<N>>::Output>>::Output;
+}
+
+impl<N, El, K> ELiftRec<N> for ElShift<El, K> {
+    type Output = ElLift<N, ElShift<El, K>>;
+}
+
+/// Cross Pred<N> binders
+pub trait ELiftN<N> {
+    type Output;
+}
+
+impl<El> ELiftN<Here> for El {
+    type Output = El;
+}
+
+impl<N, El> ELiftN<There<N>> for El where El: ELiftRec<N> {
+    type Output = <El as ELiftRec<N>>::Output;
+}
+
+/// Cross one binder
+pub trait ELift {
+    type Output;
+}
+
+impl<El> ELift for El where El: ELiftN<There<Here>> {
+    type Output = <El as ELiftN<There<Here>>>::Output;
+}
+
+/// Relocation of de Bruijn n in an explicit lift ElLift<k, el> (aux trait, self = n - k)
+pub trait RelocRelLift<N, K, El> {
+    type Output;
+}
+
+/// Zero case : n - k ≤ 0 (n ≤ k)
+impl<N, K, El> RelocRelLift<N, K, El> for Here
+{
+    type Output = N;
+}
+
+/// Succ case : n - k = ndiffk (n > k)
+impl<N, K, El, NDiffK> RelocRelLift<N, K, El> for There<NDiffK>
+    where
+        El: RelocRel<NDiffK>,
+        <El as RelocRel<NDiffK>>::Output: IAdd<K>,
+{
+    type Output = <<El as RelocRel<NDiffK>>::Output as IAdd<K>>::Output;
+}
+
+/// Relocation of de Bruijn n in an explicit lift
+pub trait RelocRel<N> {
+    type Output;
+}
+
+impl<N> RelocRel<N> for ElId {
+    type Output = N;
+}
+
+impl<N, K, El> RelocRel<N> for ElLift<K, El>
+    where
+        There<N> : ISub<There<K>>,
+        <There<N> as ISub<There<K>>>::Output : RelocRelLift<N, K, El>,
+{
+    type Output = <<There<N> as ISub<There<K>>>::Output as RelocRelLift<N, K, El>>::Output;
+}
+
+impl<N, El, K> RelocRel<N> for ElShift<El, K>
+    where
+        N : IAdd<K>,
+        El : RelocRel<<N as IAdd<K>>::Output>,
+{
+    type Output = <El as RelocRel<<N as IAdd<K>>::Output>>::Output;
+}
+
+/// Substitutions
+
+/// ESID(n)    = %n END   bounded identity
+pub struct EsId<N> {
+    /// NOTE: n = pred N
+    n: N,
+}
+
+/// CONS(t,S)  = (S.t)    parallel substitution
+pub struct EsCons<T,S> {
+    t: T,
+    s: S,
+}
+
+/// SHIFT(n,S) = (^n o S) terms in S are relocated with n vars
+pub struct EsShift<N, S> {
+    n: N,
+    s: S,
+}
+
+/// LIFT(n,S) = (%n S) stands for ((^n o S).n...1)
+pub struct EsLift<N, S> {
+    n: N,
+    s: S,
+}
+
+pub trait SubsCons<X> {
+    type Output;
+}
+
+impl<X, S> SubsCons<X> for S {
+    type Output = EsCons<X, S>;
+}
+
+pub trait SubsLiftN2<N> {
+    type Output;
+}
+
+/// bounded identity lifted extends by p
+///
+/// Here + N = N; There P + N = P + N; thn add 1, so it
+/// amounts to just adding P.
+impl<N, P> SubsLiftN2<N> for EsId<P> where P : IAdd<N> {
+    type Output = EsId<<P as IAdd<N>>::Output>;
+}
+
+impl<N, P, LEnv> SubsLiftN2<N> for EsLift<P, LEnv> where P : IAdd<N> {
+    type Output = EsLift<<P as IAdd<N>>::Output, LEnv>;
+}
+
+impl<N, X, LEnv> SubsLiftN2<N> for EsCons<X, LEnv> {
+    type Output = EsLift<N, EsCons<X, LEnv>>;
+}
+
+impl<N, K, LEnv> SubsLiftN2<N> for EsShift<K, LEnv> {
+    type Output = EsLift<N, EsShift<K, LEnv>>;
+}
+
+pub trait SubsLift {
+    type Output;
+}
+
+impl<A> SubsLift for A where A : SubsLiftN2<Here> {
+    type Output = <A as SubsLiftN2<Here>>::Output;
+}
+
+pub trait SubsLiftN<N> {
+    type Output;
+}
+
+/// lift by 0
+impl<A> SubsLiftN<Here> for A {
+    type Output = A;
+}
+
+/// lift by S n
+impl<N, A> SubsLiftN<There<N>> for A where A : SubsLiftN2<N> {
+    type Output = <A as SubsLiftN2<N>>::Output;
+}
+
+/// shift by N
+pub trait SubsShft<N> {
+    type Output;
+}
+
+impl<N, K, S1> SubsShft<N> for EsShift<K, S1> where K : IAdd<N> {
+    type Output = EsShift<<K as IAdd<N>>::Output, S1>;
+}
+
+impl<N, K> SubsShft<N> for EsId<K> {
+    type Output = EsShift<N, EsId<K>>;
+}
+
+impl<N, X, S1> SubsShft<N> for EsCons<X, S1> {
+    type Output = EsShift<N, EsCons<X, S1>>;
+}
+
+impl<N, K, S1> SubsShft<N> for EsLift<K, S1> {
+    type Output = EsShift<N, EsLift<K, S1>>;
+}
+
+/// KDiffN = K - N
+pub trait ExpRelLift<Lams, K, KDiffN> {
+    type Output;
+}
+
+/// K - N ≤ 0 → K ≤ N (Lams = Here, i.e. Lams = 0)
+impl<K, N, L> ExpRelLift<Here, K, Here> for EsLift<N, L> {
+    type Output = Inr<(K, Here)>;
+}
+
+/// K - N ≤ 0 → K ≤ N (Lams = There Lams', i.e. Lams = Lams')
+impl<Lams, K, N, L> ExpRelLift<There<Lams>, K, Here> for EsLift<N, L> where Lams : IAdd<K> {
+    type Output = Inr<(<Lams as IAdd<K>>::Output, Here)>;
+}
+
+/// K - N > 0 → K > N
+impl<Lams, K, KDiffN, N, L> ExpRelLift<Lams, K, There<KDiffN>> for EsLift<N, L>
+    where
+        N : IAdd<Lams>,
+        L : ExpRel<<N as IAdd<Lams>>::Output, KDiffN>
+{
+    type Output = <L as ExpRel<<N as IAdd<Lams>>::Output, KDiffN>>::Output;
+}
+
+/// KDiffN = K - N
+pub trait ExpRelId<Lams, K, KDiffN> {
+    type Output;
+}
+
+/// K - N ≤ 0 → K ≤ N (Lams = Here, i.e. Lams = 0)
+impl<K, N> ExpRelId<Here, K, Here> for EsId<N> {
+    type Output = Inr<(K, Here)>;
+}
+
+/// K - N ≤ 0 → K ≤ N (Lams = There Lams', i.e. Lams = Lams')
+impl<Lams, K, N> ExpRelId<There<Lams>, K, Here> for EsId<N> where Lams : IAdd<K> {
+    type Output = Inr<(<Lams as IAdd<K>>::Output, Here)>;
+}
+
+/// K - N > 0 → K > N (Lams = Here, i.e. Lams = 0)
+impl<K, KDiffN, N> ExpRelId<Here, K, There<KDiffN>> for EsId<N> {
+    type Output = Inr<(K, There<KDiffN>)>;
+}
+
+/// K - N > 0 → K > N (Lams = There Lams', i.e. Lams = Lams')
+impl<Lams, K, KDiffN, N> ExpRelId<There<Lams>, K, There<KDiffN>> for EsId<N> where Lams : IAdd<K> {
+    type Output = Inr<(<Lams as IAdd<K>>::Output, There<KDiffN>)>;
+}
+
+/// Expands de Bruijn k in the explicit substitution subs
+/// lams accumulates de shifts to perform when retrieving the i-th value
+/// the rules used are the following:
+///
+///    [id]k       --> k
+///    [S.t]1      --> t
+///    [S.t]k      --> [S](k-1)  if k > 1
+///    [^n o S] k  --> [^n]([S]k)
+///    [(%n S)] k  --> k         if k <= n
+///    [(%n S)] k  --> [^n]([S](k-n))
+///
+/// The result is either (Inl(lams,v)) when the variable is
+/// substituted by value [v] under lams binders (i.e. v *has* to be
+/// shifted by lams), or (Inr (k',p)) when the variable k is just relocated
+/// as k'; p is Here if the variable points inside subs and There(k) if the
+/// variable points k bindings beyond subs (cf argument of ESID).
+pub trait ExpRel<Lams, K> {
+    type Output;
+}
+/*let rec exp_rel lams k subs =
+  match subs with
+    | CONS (def,_) when k <= Array.length def
+                           -> Inl(lams,def.(Array.length def - k))
+    | CONS (v,l)           -> exp_rel lams (k - Array.length v) l
+    | LIFT (n,_) when k<=n -> Inr(lams+k,None)
+    | LIFT (n,l)           -> exp_rel (n+lams) (k-n) l
+    | SHIFT (n,s)          -> exp_rel (n+lams) k s
+    | ESID n when k<=n     -> Inr(lams+k,None)
+    | ESID n               -> Inr(lams+k,Some (k-n))*/
+
+/// k ≤ 1
+impl<Lams, Def, L> ExpRel<Lams, Here> for EsCons<Def, L>
+{
+    type Output = Inl<(Lams, Def)>;
+}
+
+/// k > 1
+impl<Lams, K, Def, L> ExpRel<Lams, There<K>> for EsCons<Def, L> where L : ExpRel<Lams, K> {
+    type Output = <L as ExpRel<Lams, K>>::Output;
+}
+
+impl<Lams, K, N, L> ExpRel<Lams, K> for EsLift<N, L>
+    where
+        There<K> : ISub<There<N>>,
+        Self : ExpRelLift<Lams, K, <There<K> as ISub<There<N>>>::Output>,
+{
+    type Output = <Self as ExpRelLift<Lams, K, <There<K> as ISub<There<N>>>::Output>>::Output;
+}
+
+impl<Lams, K, N, S> ExpRel<Lams, K> for EsShift<N, S>
+    where
+        N : IAdd<Lams>,
+        S : ExpRel<<N as IAdd<Lams>>::Output, K>,
+{
+    type Output = <S as ExpRel<<N as IAdd<Lams>>::Output, K>>::Output;
+}
+
+impl<Lams, K, N> ExpRel<Lams, K> for EsId<N>
+    where
+        There<K> : ISub<N>,
+        Self : ExpRelId<Lams, K, <There<K> as ISub<N>>::Output>,
+{
+    type Output = <Self as ExpRelId<Lams, K, <There<K> as ISub<N>>::Output>>::Output;
+}
+
+pub trait ExpandRel<K> {
+    type Output;
+}
+
+impl<K, Subs> ExpandRel<K> for Subs where Subs : ExpRel<Here, K> {
+    type Output = <Subs as ExpRel<Here, K>>::Output;
+}
+
+    //Selector<FromTail, There<TailIndex>> for HCons<Head, Tail>
 
 /* #[derive(Generic, LabelledGeneric)]
 pub struct Context<Subs : HList> {
@@ -133,132 +574,73 @@ pub struct Rel<Index> {
     index: Index,
 }
 
-pub trait IAdd<RHS> {
+/// The generic lifting function
+pub trait ExLiftN<El> {
     type Output;
 }
 
-impl<M> IAdd<Here> for Rel<M> {
-    type Output = There<M>;
-
-    /* fn add(self, rhs: Here) -> Self::Output {
-        self
-    } */
-}
-
-impl<M, N> IAdd<There<N>> for Rel<M>
-    where Rel<M> : IAdd<N>
-{
-    type Output = There<<Rel<M> as IAdd<N>>::Output>;
-
-    /* fn add(self, rhs: There<M>) -> There<<Rel<M> as Add<N>>::Output>
-        //Self::Output
-    {
-        // NOTE: Shouldn't really require unsafe (should be able to
-        // construct it Peano-style as { There : rhs.there.add() }...
-        // but we don't have access to the module.
-        unsafe { mem::transmute(self) }
-    } */
-}
-
-/// NOTE: For ISub purposes, Here means 0, not 1!
-pub trait ISub<RHS> {
-    type Output;
-}
-
-impl<M> ISub<Here> for Rel<M> {
-    type Output = M;
-}
-
-impl<N> ISub<There<N>> for Rel<Here> {
-    type Output = Here;
-}
-
-impl<M, N> ISub<There<N>> for Rel<There<M>>
-    where Rel<M> : ISub<N>
-{
-    type Output = <Rel<M> as ISub<N>>::Output;
-}
-
-/// Trait used for dealing with lifts.
-/// NOTE: Lift (K = There<K'>, IndexDiffK = Self - K')
-pub trait RelocRel<N, IndexDiffK> {
-    type Output;
-}
-
-/// NOTE: Treat K as 1 + K', where K' is what we actually care about.
-///       
-/// NOTE: Here = ((1 + Index) - K)
-///
-/// NOTE: If Here, Index ≤ K', so we return Index unchanged.
-impl<N, Index> RelocRel<N, Here> for Rel<Index> {
-    type Output = Index;
-}
-
-/// NOTE: Treat K as 1 + K', where K' is what we actually care about.
-///
-/// NOTE: There<IndexDiffK> = ((1 + Index) - K)
-///
-/// NOTE: If There<IndexDiffK>, K' < Index, so we shift Index by N.
-impl<N, IndexDiffK, Index> RelocRel<N, There<IndexDiffK>> for Rel<Index>
-    where Self : IAdd<N>,
-{
-    type Output = <Self as IAdd<N>>::Output;
-}
-
-
-/// K = Lifts, N = Shifts.  Lifts are evaluated first.
-pub trait LiftN<K, N> {
-    type Output;
-}
-
-impl<K, N, T, C> LiftN<K, N> for Prod<T, C>
+impl<El, T, C> ExLiftN<El> for Prod<T, C>
     where
-        T: LiftN<K, N>,
-        C: LiftN<There<K>, N>,
+        T: ExLiftN<El>,
+        El : ELift,
+        C: ExLiftN<<El as ELift>::Output>,
 {
-    type Output = Prod<<T as LiftN<K, N>>::Output, <C as LiftN<There<K>, N>>::Output>;
+    type Output = Prod<<T as ExLiftN<El>>::Output, <C as ExLiftN<<El as ELift>::Output>>::Output>;
 }
 
-impl<K, N, T, B> LiftN<K, N> for Lambda<T, B>
+impl<El, T, B> ExLiftN<El> for Lambda<T, B>
     where
-        T: LiftN<K, N>,
-        B: LiftN<There<K>, N>,
+        T: ExLiftN<El>,
+        El : ELift,
+        B: ExLiftN<<El as ELift>::Output>,
 {
-    type Output = Prod<<T as LiftN<K, N>>::Output, <B as LiftN<There<K>, N>>::Output>;
+    type Output = Lambda<<T as ExLiftN<El>>::Output, <B as ExLiftN<<El as ELift>::Output>>::Output>;
 }
 
-impl<K, N, F, A> LiftN<K, N> for App<F, A>
+impl<El, F, A> ExLiftN<El> for App<F, A>
     where
-        F: LiftN<K, N>,
-        A: LiftN<K, N>,
+        F: ExLiftN<El>,
+        A: ExLiftN<El>,
 {
-    type Output = App<<F as LiftN<K, N>>::Output, <A as LiftN<K, N>>::Output>;
+    type Output = App<<F as ExLiftN<El>>::Output, <A as ExLiftN<El>>::Output>;
 }
 
-impl<K, N, S> LiftN<K, N> for Sort<S> {
+impl<El, S> ExLiftN<El> for Sort<S> {
     type Output = Self;
 }
 
 /// Lifting
 
-impl<K, N, Index> LiftN<K, N> for Rel<Index>
+impl<El, Index> ExLiftN<El> for Rel<Index>
     where
-        // NOTE: K is "really" There<K'>, where K' is what we care about.
-        Rel<There<Index>> : ISub<K>,
-        // Compute the necessary relocation.
-        Self: RelocRel<N, <Rel<There<Index>> as ISub<K>>::Output>,
+        El : RelocRel<Index>,
 {
-    type Output = Rel<<Self as RelocRel<N, <Rel<There<Index>> as ISub<K>>::Output>>::Output>;
+    type Output = Rel<<El as RelocRel<Index>>::Output>;
 }
 
-pub trait Lift<Index> : LiftN<Here, Index>
+/// Lifting the binding depth across k bindings
+pub trait LiftN<K, N> {
+    type Output;
+}
+
+impl<K, N, T> LiftN<K, N> for T
+    where
+        ElId : EShift<There<K>>,
+        // NOTE: ELiftN expects N+1, so it lifts by N-1, which is what we want here.
+        <ElId as EShift<There<K>>>::Output : ELiftN<N>,
+        T : ExLiftN<<<ElId as EShift<There<K>>>::Output as ELiftN<N>>::Output>,
+{
+    type Output = <T as ExLiftN<<<ElId as EShift<There<K>>>::Output as ELiftN<N>>::Output>>::Output;
+}
+
+pub trait Lift<Index> : LiftN</*Here, Index*/Index, Here>
 {
     type Output;
 }
 
-impl<T, Index> Lift<Index> for T where T : LiftN<Here, Index>
+impl<T, Index> Lift<Index> for T where T : LiftN</*Here, Index*/Index, Here>
 {
-    type Output = <T as LiftN<Here, Index>>::Output;
+    type Output = <T as LiftN</*Here, Index*/Index, Here>>::Output;
 }
 
 /// Lamv = Subs, N = Shifts.  Subs are evaluated first.
@@ -281,7 +663,7 @@ impl<N, LamV, LV, T, B> SubstRec<N, LamV, LV> for Lambda<T, B>
         T: SubstRec<N, LamV, LV>,
         B: SubstRec<There<N>, LamV, LV>,
 {
-    type Output = Prod<<T as SubstRec<N, LamV, LV>>::Output, <B as SubstRec<There<N>, LamV, LV>>::Output>;
+    type Output = Lambda<<T as SubstRec<N, LamV, LV>>::Output, <B as SubstRec<There<N>, LamV, LV>>::Output>;
 }
 
 impl<N, LamV, LV, F, A> SubstRec<N, LamV, LV> for App<F, A>
@@ -316,10 +698,10 @@ impl<N, LamV, LV, S> SubstRec<N, LamV, LV> for Sort<S> {
 /*/// NOTE: We secretly know that LV = LamV::PeanoLen, and therefore
 ///       LV = Theirs<LV'> at all times.  This allows us to know
 ///       that if LDiff = Here (i.e. (K - Depth) - LV ≤ 0, i.e.
-///       K - Depth ≤ LV), then K - Depth is 
+///       K - Depth ≤ LV), then K - Depth is
 ///       then */
 pub trait SubstRel2<N, LamV, LV, IndexDiffK, LVDiff> {
-    type Output; 
+    type Output;
 }
 
 /// Here case : InDiffK is in-bounds and N = Here.
@@ -350,11 +732,11 @@ impl<N, LamV, LV, IndexDiffK, Index> SubstRel2<There<N>, LamV, LV, IndexDiffK, H
 /// output of K - LV' (to get the real answer) by instead stripping it off of K up front.  The
 /// subtraction is still in bounds, it just becomes Here ≤ K' - LV'; and again, we should be
 /// exhaustive here for all indices (there should be no missed cases).
-impl<N, LamV, LV, IndexDiffK, LVDiff, Index> SubstRel2<N, LamV, LV, IndexDiffK, There<LVDiff>> for Rel<There<Index>>
+impl<N, LamV, LV, IndexDiffK, LVDiff, Index> SubstRel2<N, LamV, LV, IndexDiffK, There<LVDiff>> for Rel</*There<*/Index/*>*/>
     where
-        Rel<Index> : ISub<LV>,
+        Index : ISub<LV>,
 {
-    type Output = Rel<<Rel<Index> as ISub<LV>>::Output>;
+    type Output = Rel<<Index as ISub<LV>>::Output>;
 }
 
 /// LV' < K - Depth, i.e. There<LV'> ≤ K - Depth, so
@@ -368,7 +750,7 @@ pub trait SubstRel<N, LamV, LV, IndexDiffK> {
 }
 
 /// NOTE: Treat N as 1 + K', where K' is what we actually care about.
-///       
+///
 /// NOTE: Here = ((1 + Index) - N)
 ///
 /// NOTE: If Here, Index ≤ K', so we return Index unchanged.
@@ -385,30 +767,30 @@ impl<N, LamV, LV, IndexDiffK, Index> SubstRel<N, LamV, LV, There<IndexDiffK>> fo
     where
         // Recall : PeanoLen is actually len + 1, so this all works out
         // (output is 1+ as well).  This is lv - (k - depth), i.e. (k - depth) ≤ lv.
-        Rel<There<IndexDiffK>> : ISub<LV>,
+        There<IndexDiffK> : ISub<LV>,
         // Note that if lv < k - depth, depth < k - lv, so k - lv > 0; therefore,
         // since subtraction normally returns output + 1, and we know the output is
         // positive, we can get the real output by subtracting 1 from k first (it
         // won't mess up at 0 because (k - 1) - lv ≥ 0).
         // Even though it's not always necessary, we also compute k - lv here to
         // be able to extract the There pattern (if k - depth ≤ lv
-        Rel<Index> : SubstRel2<N, LamV, LV, IndexDiffK, <Rel<There<IndexDiffK>> as ISub<LV>>::Output>,
+        Rel<Index> : SubstRel2<N, LamV, LV, IndexDiffK, <There<IndexDiffK> as ISub<LV>>::Output>,
         /*  else if k-depth <= lv then lift_substituend depth lamv.(k-depth-1)
 
          */
         // Self : IAdd<N>,
 {
-    type Output = <Self as SubstRel2<N, LamV, LV, IndexDiffK, <Rel<There<IndexDiffK>> as ISub<LV>>::Output>>::Output;
+    type Output = <Self as SubstRel2<N, LamV, LV, IndexDiffK, <There<IndexDiffK> as ISub<LV>>::Output>>::Output;
 }
 
 impl<N, LamV, LV, Index> SubstRec<N, LamV, LV> for Rel<Index>
     where
         // NOTE: N is "really" There<N'>, where N' is what we care about.
-        Rel<There<Index>> : ISub<N>,
+        There<Index> : ISub<N>,
         // Compute the necessary relocation.
-        Self: SubstRel<N, LamV, LV, <Rel<There<Index>> as ISub<N>>::Output>,
+        Self: SubstRel<N, LamV, LV, <There<Index> as ISub<N>>::Output>,
 {
-    type Output = <Self as SubstRel<N, LamV, LV, <Rel<There<Index>> as ISub<N>>::Output>>::Output;
+    type Output = <Self as SubstRel<N, LamV, LV, <There<Index> as ISub<N>>::Output>>::Output;
 }
 /*
     fn substrec<T>(&self,
@@ -516,7 +898,7 @@ impl<Lam, C> Subst1<Lam> for C
     where
         C : SubstNMany<Hlist![Lam], Here>,
 {
-    type Output = <C as SubstNMany::<Hlist![Lam], Here>>::Output;
+    type Output = <C as SubstNMany<Hlist![Lam], Here>>::Output;
 }
 /*
     pub fn subst1(&self, lam: &Constr) -> IdxResult<Constr> {
@@ -525,13 +907,638 @@ impl<Lam, C> Subst1<Lam> for C
     }
 */
 
+pub struct True;
+
+pub struct False;
+
+pub trait Reds {
+    type Delta;
+}
+
+pub struct BetaDeltaIota;
+
+pub struct BetaIotaZeta;
+
+impl Reds for BetaDeltaIota {
+    type Delta = True;
+}
+
+impl Reds for BetaIotaZeta {
+    type Delta = False;
+}
+
+pub trait Infos {
+    type Flags : Reds;
+    type Rels : HList;
+}
+
+pub trait RefValueCacheRel<N> {
+    type Output;
+}
+
+/// Rel out of bounds (NOTE: should this actually be an error?)
+impl<N> RefValueCacheRel<N> for TNone {
+    type Output = TNone;
+}
+
+/// Rel in bounds, but an Assum, not a Decl (hence no body).
+impl<Type, N> RefValueCacheRel<N> for TSome<Assum<Type>> {
+    type Output = TNone;
+}
+
+/// Rel in bounds, and a Decl (hence has body)
+impl<Body, Type, N> RefValueCacheRel<N> for TSome<Decl<Body, Type>>
+    where
+        Body : Lift<N>,
+        <Body as Lift<N>>::Output : Inject,
+{
+    type Output = TSome<<<Body as Lift<N>>::Output as Inject>::Output>;
+}
+
+pub trait RefValueCache<Ref> : Infos {
+    type Output;
+}
+
+impl<Info : Infos, N> RefValueCache<Rel<N>> for Info
+    where
+        Info::Rels : AtIndexOpt<N>,
+        <Info::Rels as AtIndexOpt<N>>::Output : RefValueCacheRel<N>,
+{
+    type Output = <<Info::Rels as AtIndexOpt<N>>::Output as RefValueCacheRel<N>>::Output;
+}
+
+/// FVal(c) represents the constr c.
+/// c must be in normal form and neutral (i.e. not a lambda, a construct or a
+/// (co)fix, because they may produce redexes by applying them,
+/// or putting them in a case)
+pub struct FVal<C> {
+    c: C,
+}
+
+/// FFlex(c) represents the RelKey / ConstKey c.
+///
+/// NOTE: Might be able to replace FFlex(c) with FCbn(c, EsId(Here)), since evaluating in that
+/// (empty) environment is essentially what we do when grabbing the contents of the flex.
+pub struct FFlex<C> {
+    c: C,
+}
+
+/// FStk(v,stk) represents an irreductible value [v] in the stack [stk].
+/// (Note that [v] is a WhdValue and [Stk] is a *reversed* Stack; the
+/// reversal is necessary to emulate the behavior of Zip).
+pub struct FStk<V, Stk> {
+    v: V,
+    stk: Stk,
+}
+
+/// FCbn(t,S) is the term [S]t. It is used to delay evaluation.
+/// (Note that [t] is a Constr and [S] is a substitution).
+pub struct FCbn<T, S> {
+    t: T,
+    s: S,
+}
+
+/// ZApp is a delayed application of the head to A on a Stack.
+pub struct ZApp<A> {
+    a: A,
+}
+
+/// ZShift is a delayed shift of the head by K on a Stack.
+///
+/// NOTE: Currently K is the real shift, but we could turn it into K = Pred<K'> with K' the real
+/// shift if needed (this would allow shifts by 0).
+pub struct ZShift<K> {
+    k: K,
+}
+
+/// WhdAppendStack appends V to stack Self
+pub trait WhdAppendStack<V> {
+    type Output;
+}
+
+impl<V, S> WhdAppendStack<V> for S {
+    type Output = HCons<ZApp<V>, S>;
+}
+
+/// StkShift adds a delayed shift by N to stack Self
+/// (collapses shifts in the stack).
+pub trait StkShift<N> {
+    type Output;
+}
+
+impl<N, K, S> StkShift<N> for HCons<ZShift<K>, S> where N : IAdd<K> {
+    type Output = HCons<ZShift<<N as IAdd<K>>::Output>, S>;
+}
+
+impl<N, A, S> StkShift<N> for HCons<ZApp<A>, S> {
+    type Output = HCons<ZShift<N>, Self>;
+}
+
+impl<N> StkShift<N> for HNil {
+    type Output = HCons<ZShift<N>, Self>;
+}
+
+/// Lifting by K. Preserves sharing where theoretically useful (norm = Red).
+pub trait WhdLft<K> {
+    type Output;
+}
+
+/* /// Lifting a stack by K: add the lift to the stack. NOTE: need to reverse this!
+impl<K, V, S> WhdLft<K> for FStk<V, S> where S : StkShift<K> {
+    type Output = <S as StkShift<K>>::Output;
+}
+
+/// Lifting a value by K: just lift the value directly using exlittn (it's normal
+/// so this is fine).
+impl<K, V, S> WhdLft<K> for FStk<V, S> where S : StkShift<K> {
+    type Output = <S as StkShift<K>>::Output;
+} */
+
+impl<K, V> WhdLft<K> for V {
+    type Output = FStk<V, Hlist![ZShift<K>]>;
+}
+
+/// WhdLift<K> lifts Self by K' if K = There K', otherwise does not lift.
+pub trait WhdLift<K> {
+    type Output;
+}
+
+impl<F> WhdLift<Here> for F {
+    type Output = F;
+}
+
+impl<K, F> WhdLift<There<K>> for F where F : WhdLft<K> {
+    type Output = <F as WhdLft<K>>::Output;
+}
+
+/// Turn a rel I into a closed value, where Self is the result
+/// of running ExpandRel<I> for environment E.
+pub trait ClosRel<I> {
+    type Output;
+}
+
+impl<I, N, MT> ClosRel<I> for Inl<(N, MT)> where MT : WhdLift<N> {
+    type Output = <MT as WhdLift<N>>::Output;
+}
+
+/// Note: currently ExpandRel returns the real K for Inr cases, rather than
+/// There K; but we could also change ExpandRel to be a bit simpler and have
+/// Inr only accept There K.
+impl<I, K> ClosRel<I> for Inr<(K, Here)> {
+    type Output = FVal<Rel<K>>;
+}
+
+/// See above comment
+///
+/// NOTE: k-p guaranteed non-negative.
+impl<I, K, P> ClosRel<I> for Inr<(K, There<P>)>
+    where
+        There<K> : ISub<There<P>>,
+        FFlex<Rel<P>> : WhdLift<<There<K> as ISub<There<P>>>::Output>,
+{
+    type Output = <FFlex<Rel<P>> as WhdLift<<There<K> as ISub<There<P>>>::Output>>::Output;
+}
+
+/// Optimization: do not enclose variables in a closure.
+/// Makes variable access much faster.
+/// E is the environment.
+pub trait MkClos<E> {
+    type Output;
+}
+
+impl<E, I> MkClos<E> for Rel<I>
+    where
+        E : ExpandRel<I>,
+        <E as ExpandRel<I>>::Output : ClosRel<I>,
+{
+    type Output = <<E as ExpandRel<I>>::Output as ClosRel<I>>::Output;
+}
+
+impl<E, S> MkClos<E> for Sort<S> {
+    type Output = FVal<Sort<S>>;
+}
+
+impl<E, T, B> MkClos<E> for Lambda<T, B> {
+    type Output = FCbn<Lambda<T, B>, E>;
+}
+
+impl<E, T, C> MkClos<E> for Prod<T, C> {
+    type Output = FCbn<Prod<T, C>, E>;
+}
+
+impl<E, F, A> MkClos<E> for App<F, A> {
+    type Output = FCbn<App<F, A>, E>;
+}
+
+/// The inverse of mk_clos: move Self back to constr under Lfts lifting environment.
+pub trait ToConstr<Lfts> {
+    type Output;
+}
+
+/// Values in normal form just get lifted to the corresponding Constr.
+impl<Lfts, C> ToConstr<Lfts> for FVal<C> where C : ExLiftN<Lfts> {
+    type Output = <C as ExLiftN<Lfts>>::Output;
+}
+
+/// Flex values also just get lifted to the corresponding Constr (the difference mostly
+/// matters for conversion, which wants to compare RelKeys for equality without
+/// considering the lifting environment because it knows that if they are equal unlifted
+/// their bodies will also be equal; while for interior substitutions, that's not the case
+/// since they are not shared between the two terms, and they must be exactly identical).
+impl<Lfts, C> ToConstr<Lfts> for FFlex<C> where C : ExLiftN<Lfts> {
+    type Output = <C as ExLiftN<Lfts>>::Output;
+}
+
+impl<Lfts, F, A, Env> ToConstr<Lfts> for FCbn<App<F, A>, Env>
+    where
+        F : MkClos<Env>,
+        <F as MkClos<Env>>::Output : ToConstr<Lfts>,
+        A : MkClos<Env>,
+        <A as MkClos<Env>>::Output : ToConstr<Lfts>,
+{
+    type Output = App<<<F as MkClos<Env>>::Output as ToConstr<Lfts>>::Output,
+                      <<A as MkClos<Env>>::Output as ToConstr<Lfts>>::Output>;
+}
+
+impl<Lfts, T, B, Env> ToConstr<Lfts> for FCbn<Lambda<T, B>, Env>
+    where
+        T : MkClos<Env>,
+        <T as MkClos<Env>>::Output : ToConstr<Lfts>,
+        Env : SubsLift,
+        B : MkClos<<Env as SubsLift>::Output>,
+        Lfts : ELift,
+        <B as MkClos<<Env as SubsLift>::Output>>::Output : ToConstr<<Lfts as ELift>::Output>,
+{
+    type Output = Lambda<<<T as MkClos<Env>>::Output as ToConstr<Lfts>>::Output,
+                         <<B as MkClos<<Env as SubsLift>::Output>>::Output as
+                          ToConstr<<Lfts as ELift>::Output>>::Output>;
+}
+
+impl<Lfts, T, C, Env> ToConstr<Lfts> for FCbn<Prod<T, C>, Env>
+    where
+        T : MkClos<Env>,
+        <T as MkClos<Env>>::Output : ToConstr<Lfts>,
+        Env : SubsLift,
+        C : MkClos<<Env as SubsLift>::Output>,
+        Lfts : ELift,
+        <C as MkClos<<Env as SubsLift>::Output>>::Output :
+            ToConstr<<Lfts as ELift>::Output>,
+{
+    type Output = Prod<<<T as MkClos<Env>>::Output as ToConstr<Lfts>>::Output,
+                       <<C as MkClos<<Env as SubsLift>::Output>>::Output as
+                        ToConstr<<Lfts as ELift>::Output>>::Output>;
+}
+
+/// For an empty stack, just apply ToConstr to the value at the stack head.
+impl<Lfts, V> ToConstr<Lfts> for FStk<V, HNil>
+    where
+        V : ToConstr<Lfts>,
+{
+    type Output = <V as ToConstr<Lfts>>::Output;
+}
+
+/// For an app (reversed) stack, first run Stk on F, then apply the result to A.
+impl<Lfts, F, A, Stk> ToConstr<Lfts> for FStk<F, HCons<ZApp<A>, Stk>>
+    where
+        FStk<F, Stk> : ToConstr<Lfts>,
+        A : ToConstr<Lfts>,
+{
+    type Output = App<<FStk<F, Stk> as ToConstr<Lfts>>::Output, <A as ToConstr<Lfts>>::Output>;
+}
+
+/// For a shift (reversed) stack, shift Lfts by K, then run Stk on V with the resulting Lfts.
+impl<Lfts, A, K, Stk> ToConstr<Lfts> for FStk<A, HCons<ZShift<K>, Stk>>
+    where
+        Lfts : EShift<There<K>>,
+        FStk<A, Stk> : ToConstr<<Lfts as EShift<There<K>>>::Output>,
+{
+    type Output = <FStk<A, Stk> as ToConstr<<Lfts as EShift<There<K>>>::Output>>::Output;
+}
+
+/// fapp_stack transforms a value and a stack into the reversed stack applied to the value,
+/// generally for use in to_constr.  M is the value and Self is the stack.
+pub trait FAppStack<M> {
+    type Output;
+}
+
+/// For now, FAppStack just reverses and doesn't do anything else (like unlocking updates).
+impl<M, Stk : IntoReverse> FAppStack<M> for Stk {
+    type Output = FStk<M, <Stk as IntoReverse>::Output>;
+}
+
+/// A machine that inspects the head of a term until it finds an
+/// atom or a subterm that may produce a redex (abstraction,
+/// constructor, cofix, letin, constant), or a neutral term (product,
+/// inductive)
+///
+/// Self is Info, term is M, stack is Stk.  Returned head is Head, returned stack is Stack.
+///
+/// For FStk terms with reversed stacks, we just move elements from the reversed stack to the
+/// non-reversed one.
+pub trait Knh<M, Stk> {
+    type Head;
+    type Stack;
+}
+
+/// For FStk terms with an empty stack, we just run knh on the head.
+impl<A, Stk, Info> Knh<FStk<A, HNil>, Stk> for Info where Info : Knh<A, Stk> {
+    type Head = <Info as Knh<A, Stk>>::Head;
+    type Stack = <Info as Knh<A, Stk>>::Stack;
+}
+
+/// For FStk terms with a zshift k, we shift the current stack by k and rerun with
+/// the stack tail.
+impl<M, K, A, Stk, Info> Knh<FStk<M, HCons<ZShift<K>, A>>, Stk> for Info
+    where
+        Stk : StkShift<K>,
+        Info : Knh<FStk<M, A>, <Stk as StkShift<K>>::Output>,
+{
+    type Head = <Info as Knh<FStk<M, A>, <Stk as StkShift<K>>::Output>>::Head;
+    type Stack = <Info as Knh<FStk<M, A>, <Stk as StkShift<K>>::Output>>::Stack;
+}
+
+/// For FStk terms with a zapp b, we append b to the current stack and rerun with
+/// the stack tail.
+impl<M, B, A, Stk, Info> Knh<FStk<M, HCons<ZApp<B>, A>>, Stk> for Info
+    where
+        Stk : WhdAppendStack<B>,
+        Info : Knh<FStk<M, A>, <Stk as WhdAppendStack<B>>::Output>,
+{
+    type Head = <Info as Knh<FStk<M, A>, <Stk as WhdAppendStack<B>>::Output>>::Head;
+    type Stack = <Info as Knh<FStk<M, A>, <Stk as WhdAppendStack<B>>::Output>>::Stack;
+}
+
+/// For FCbn terms, we run knht.
+impl<T, E, Stk, Info> Knh<FCbn<T, E>, Stk> for Info where Info : Knht<E, T, Stk> {
+    type Head = <Info as Knht<E, T, Stk>>::Head;
+    type Stack = <Info as Knht<E, T, Stk>>::Stack;
+}
+
+/// For FVal terms, we return.
+impl<V, Stk, Info> Knh<FVal<V>, Stk> for Info {
+    type Head = FVal<V>;
+    type Stack = Stk;
+}
+
+/// For FFlex terms, we return.
+impl<C, Stk, Info> Knh<FFlex<C>, Stk> for Info {
+    type Head = FFlex<C>;
+    type Stack = Stk;
+}
+
+/// The same as knh for pure terms.
+///
+/// Self is Info, env is E, term is M, stack is Stk.
+/// Returned head is Head, returned stack is Stack.
+pub trait Knht<E, T, Stk> {
+    type Head;
+    type Stack;
+}
+
+impl<E, A, B, Stk, Info> Knht<E, App<A, B>, Stk> for Info
+    where
+        Stk : WhdAppendStack<B>,
+        Info : Knht<E, A, <Stk as WhdAppendStack<B>>::Output>,
+{
+    type Head = <Info as Knht<E, A, <Stk as WhdAppendStack<B>>::Output>>::Head;
+    type Stack = <Info as Knht<E, A, <Stk as WhdAppendStack<B>>::Output>>::Stack;
+}
+
+/// NOTE: This is the only Knht that can yield a FStk; as a result, we can assume
+/// that we don't see an FStk in knr (since we call knh, which takes care of FStks).
+impl<E, N, Stk, Info> Knht<E, Rel<N>, Stk> for Info
+    where
+        /* E : ExpandRel<N>,
+        <E as ExpandRel<N>>::Output : ClosRel<N>,
+        Info : Knh<<<E as ExpandRel<N>>::Output as ClosRel<N>>::Output, Stk>, */
+        Rel<N> : MkClos<E>,
+        Info : Knh<<Rel<N> as MkClos<E>>::Output, Stk>,
+{
+    /* type Head = <Info as Knh<E, <<E as ExpandRel<N>>::Output as ClosRel<N>>::Output, Stk>>::Head;
+    type Stack = <Info as Knh<E, <<E as ExpandRel<N>>::Output as ClosRel<N>>::Output, Stk>>::Stack; */
+    type Head = <Info as Knh<<Rel<N> as MkClos<E>>::Output, Stk>>::Head;
+    type Stack = <Info as Knh<<Rel<N> as MkClos<E>>::Output, Stk>>::Stack;
+}
+
+impl<E, T, B, Stk, Info> Knht<E, Lambda<T, B>, Stk> for Info where Lambda<T, B> : MkClos<E> {
+    type Head = <Lambda<T, B> as MkClos<E>>::Output;
+    type Stack = Stk;
+}
+
+impl<E, T, C, Stk, Info> Knht<E, Prod<T, C>, Stk> for Info where Prod<T, C> : MkClos<E> {
+    type Head = <Prod<T, C> as MkClos<E>>::Output;
+    type Stack = Stk;
+}
+
+impl<E, S, Stk, Info> Knht<E, Sort<S>, Stk> for Info where Sort<S> : MkClos<E> {
+    type Head = <Sort<S> as MkClos<E>>::Output;
+    type Stack = Stk;
+}
+
+/// Decides whether to continue expanding a Flex or not based on the result of RefValueCache.
+///
+/// Self is Info, initial FFlex value is C, RefValueCache<C> result is V, stack is Stk.
+/// Returned head is Head, returned stack is Stack.
+pub trait KnrFlex2<C, V, Stk> {
+    type Head;
+    type Stack;
+}
+
+/// If RefValueCache<C> is None, return FFlex<C> and Stk unchanged.
+impl<C, Stk, Info> KnrFlex2<C, TNone, Stk> for Info {
+    type Head = FFlex<C>;
+    type Stack = Stk;
+}
+
+/// If RefValueCache<C> is TSome<V>, run kni on V.
+impl<C, V, Stk, Info> KnrFlex2<C, TSome<V>, Stk> for Info where Info : Kni<V, Stk> {
+    type Head = <Info as Kni<V, Stk>>::Head;
+    type Stack = <Info as Kni<V, Stk>>::Stack;
+}
+
+/// Knr for FFlex<C>, where Delta is the delta flag for Self.
+pub trait KnrFlex<C, Stk, Delta> {
+    type Head;
+    type Stack;
+}
+
+/// For a FFlex C, we look up C in our local environment and kni (if Delta).
+impl<C, Stk, Info> KnrFlex<C, Stk, True> for Info
+    where
+        Info : RefValueCache<C>,
+        Info : KnrFlex2<C, <Info as RefValueCache<C>>::Output, Stk>,
+{
+    type Head = <Info as KnrFlex2<C, <Info as RefValueCache<C>>::Output, Stk>>::Head;
+    type Stack = <Info as KnrFlex2<C, <Info as RefValueCache<C>>::Output, Stk>>::Stack;
+}
+
+/// For a FFlex C, we return the FFlex (if !Delta).
+impl<C, Stk, Info> KnrFlex<C, Stk, False> for Info {
+    type Head = FFlex<C>;
+    type Stack = Stk;
+}
+
+/// Computes a weak head normal form from the result of knh.
+/// Self is Info, term is M, stack is Stk.
+/// Returned head is Head, returned stack is Stack.
+pub trait Knr<M, Stk> {
+    type Head;
+    type Stack;
+}
+
+/// For a FVal C, we return C and the stack unchanged.
+impl<C, Stk, Info> Knr<FVal<C>, Stk> for Info {
+    type Head = FVal<C>;
+    type Stack = Stk;
+}
+
+/// For a FFlex C, we look up C in our local environment and kni (if Delta).
+impl<C, Stk, Info : Infos> Knr<FFlex<C>, Stk> for Info
+    where
+        Info : KnrFlex<C, Stk, <<Info as Infos>::Flags as Reds>::Delta>,
+{
+    type Head = <Info as KnrFlex<C, Stk, <Info::Flags as Reds>::Delta>>::Head;
+    type Stack = <Info as KnrFlex<C, Stk, <Info::Flags as Reds>::Delta>>::Stack;
+}
+
+/// For an empty stack with a FCbn Lambda, we return the Cbn and stack unaltered.
+impl<T, B, E, Info> Knr<FCbn<Lambda<T, B>, E>, HNil> for Info {
+    type Head = FCbn<Lambda<T, B>, E>;
+    type Stack = HNil;
+}
+
+/// For a shift stack with a FCbn Lambda, we apply the shift to the Cbn environment.
+impl<T, B, E, K, S, Info> Knr<FCbn<Lambda<T, B>, E>, HCons<ZShift<K>, S>> for Info
+    where
+        E : SubsShft<K>,
+        Info : Knr<FCbn<Lambda<T, B>, <E as SubsShft<K>>::Output>, S>,
+{
+    type Head = <Info as Knr<FCbn<Lambda<T, B>, <E as SubsShft<K>>::Output>, S>>::Head;
+    type Stack = <Info as Knr<FCbn<Lambda<T, B>, <E as SubsShft<K>>::Output>, S>>::Stack;
+}
+
+/// For an app stack with a FCbn Lambda, we cons the app to the Cbn environment and knit.
+impl<T, B, E, A, S, Info> Knr<FCbn<Lambda<T, B>, E>, HCons<ZApp<A>, S>> for Info
+    where
+        E : SubsCons<A>,
+        Info : Knit<B, <E as SubsCons<A>>::Output, S>,
+{
+    type Head = <Info as Knit<B, <E as SubsCons<A>>::Output, S>>::Head;
+    type Stack = <Info as Knit<B, <E as SubsCons<A>>::Output, S>>::Stack;
+}
+
+impl<T, C, E, Stk, Info> Knr<FCbn<Prod<T, C>, E>, Stk> for Info {
+    type Head = FCbn<Prod<T, C>, E>;
+    type Stack = Stk;
+}
+
+/// Computes the weak head normal form of a term
+pub trait Kni<M, Stk> {
+    type Head;
+    type Stack;
+}
+
+impl<M, Stk, Info> Kni<M, Stk> for Info
+    where
+        Info : Knh<M, Stk>,
+        Info : Knr<<Info as Knh<M, Stk>>::Head, <Info as Knh<M, Stk>>::Stack>,
+{
+    type Head = <Info as Knr<<Info as Knh<M, Stk>>::Head, <Info as Knh<M, Stk>>::Stack>>::Head;
+    type Stack = <Info as Knr<<Info as Knh<M, Stk>>::Head, <Info as Knh<M, Stk>>::Stack>>::Stack;
+}
+
+/// Computes the weak head normal form of a pure term.
+pub trait Knit<E, T, Stk> {
+    type Head;
+    type Stack;
+}
+
+impl<E, T, Stk, Info> Knit<E, T, Stk> for Info
+    where
+        Info : Knht<E, T, Stk>,
+        Info : Knr<<Info as Knht<E, T, Stk>>::Head, <Info as Knht<E, T, Stk>>::Stack>,
+{
+    type Head =
+        <Info as Knr<<Info as Knht<E, T, Stk>>::Head, <Info as Knht<E, T, Stk>>::Stack>>::Head;
+    type Stack =
+        <Info as Knr<<Info as Knht<E, T, Stk>>::Head, <Info as Knht<E, T, Stk>>::Stack>>::Stack;
+}
+
+pub trait Kh<V, Stk> {
+    type Output;
+}
+
+impl<V, Stk, Info> Kh<V, Stk> for Info
+    where
+        Info : Kni<V, Stk>,
+        <Info as Kni<V, Stk>>::Stack : FAppStack<<Info as Kni<V, Stk>>::Head>,
+{
+    type Output = <<Info as Kni<V, Stk>>::Stack as FAppStack<<Info as Kni<V, Stk>>::Head>>::Output;
+}
+
+/// Weak reduction
+pub trait WhdVal<V> {
+    type Output;
+}
+
+impl<V, Info> WhdVal<V> for Info
+    where
+        Info : Kh<V, HNil>,
+        <Info as Kh<V, HNil>>::Output : ToConstr<ElId>,
+{
+    type Output = <<Info as Kh<V, HNil>>::Output as ToConstr<ElId>>::Output;
+}
+
+pub trait Inject {
+    type Output;
+}
+
+impl<T> Inject for T where T : MkClos<EsId<Here>> {
+    type Output = T::Output;
+}
+
+pub trait WhdStack<M, Stk> {
+    type Head;
+    type Stack;
+}
+
+impl<M, Stk, Info> WhdStack<M, Stk> for Info where Info : Kni<M, Stk>,
+{
+    type Head = <Info as Kni<M, Stk>>::Head;
+    type Stack = <Info as Kni<M, Stk>>::Stack;
+}
+
+pub trait CreateClosInfos<Flags> {
+    type Info;
+}
+
+pub struct ClosInfos<Flags, Rels> {
+    flags: Flags,
+    rels: Rels,
+}
+
+impl<Flags : Reds, Rels : HList> Infos for ClosInfos<Flags, Rels> {
+    type Flags = Flags;
+    type Rels = Rels;
+}
+
+impl<Flags, Env : Context> CreateClosInfos<Flags> for Env {
+    type Info = ClosInfos<Flags, Env::Subs>;
+}
+
+/// Reduction functions
+
 pub trait WhdAll<Ctx> where Ctx : Context {
     type Output;
 }
 
-/// Temporary WhdAll implementation until real reduction is implemented.
-impl<Term, Ctx : Context> WhdAll<Ctx> for Term {
-    type Output = Term;
+impl<Term, Ctx : Context> WhdAll<Ctx> for Term
+    where
+        Ctx : CreateClosInfos<BetaDeltaIota>,
+        Term : Inject,
+        <Ctx as CreateClosInfos<BetaDeltaIota>>::Info : WhdVal<Term::Output>,
+{
+    type Output = <<Ctx as CreateClosInfos<BetaDeltaIota>>::Info as WhdVal<Term::Output>>::Output;
 }
 
 pub struct PbConv;
@@ -700,7 +1707,7 @@ impl<Ctx : Context> SortOfProduct<Set, Set> for Ctx {
                 Cow::Owned(Sort::Type(u1))
             },
         })
- * 
+ *
 */
 
 /* pub trait DecomposeApp<F, Args : HList> : Context
@@ -968,12 +1975,44 @@ mod test {
         Ctx::my_judge_type::<App<Lambda<Sort<Set>, Lambda<Rel<Here>, Rel<Here>>>, Rel<There<Here>>>,
                              Prod<Rel<There<Here>>, Rel<There<There<Here>>>>,
                              Set>();
-        // Below requires weak head reduction to be at least partially implemented (for rels) in order to succeed.
-        /* MyContext::<Hlist![Assum<Rel<Here>>, Assum<Sort<Set>>]>::
+        // Note: below test is basically a duplicate
+        MyContext::<Hlist![Assum<Rel<Here>>, Assum<Sort<Set>>]>::
+            my_judge_type::<App<Lambda<Sort<Set>, Lambda<Rel<Here>, Rel<Here>>>, Rel<There<Here>>>,
+                            Prod<Rel<There<Here>>, Rel<There<There<Here>>>>,
+                            Set>();
+        MyContext::<Hlist![Assum<Rel<Here>>, Assum<Sort<Set>>]>::
             my_judge_type::<App<App<Lambda<Sort<Set>, Lambda<Rel<Here>, Rel<Here>>>, Rel<There<Here>>>, Rel<Here>>,
-                            Rel<Here>,
-                            Set>(); */
+                            Rel<There<Here>>,
+                            Set>();
+        MyContext::<Hlist![Assum<Sort<Set>>]>::
+            my_judge_type::<Lambda<App<Lambda<Sort<Set>, Rel<Here>>, Rel<Here>>, Rel<Here>>,
+                            Prod<App<Lambda<Sort<Set>, Rel<Here>>, Rel<Here>>, App<Lambda<Sort<Set>, Rel<Here>>, Rel<There<Here>>>>,
+                            Set>();
+        MyContext::<Hlist![Assum<Sort<Set>>]>::
+            my_judge_type::<Lambda<App<Lambda<Sort<Set>, Rel<Here>>, Rel<Here>>,
+                                   App<Lambda<App<Lambda<Sort<Set>, Rel<Here>>,
+                                                  Rel<There<Here>>>,
+                                              Rel<Here>>,
+                                       Rel<Here>>>,
+                            Prod<App<Lambda<Sort<Set>, Rel<Here>>, Rel<Here>>, App<Lambda<Sort<Set>, Rel<Here>>, Rel<There<Here>>>>,
+                            Set>();
+        /*MyContext::<Hlist![Decl<App<Lambda<Sort<Type>, Rel<Here>>, Sort<Set>>, Sort<Type>>]>::
+            my_judge_type::<Rel<Here>, /*Sort<Set>*/Rel<There<Here>>, Type>();*/
+        MyContext::<Hlist![Assum<Rel<Here>>, Decl<App<Lambda<Sort<Type>, Rel<Here>>, Sort<Set>>, Sort<Type>>]>::
+            my_judge_type::<Rel<Here>, /*Sort<Set>*/Rel<There<Here>>, Type>();
         // Below should error: would require a universe larger than Type.
         // Ctx::my_judge_type::<Prod<Sort<Type>, Rel<There<Here>>>, Sort<Type>, _>();
+        // Below requires weak head reduction to be at least partially implemented (for rels) in order to succeed.
+        MyContext::<Hlist![Assum<Rel<Here>>, Decl<Sort<Set>, Sort<Type>>]>::
+            my_judge_sort::<Rel<Here>, Set>();
+        // Below requires conversion to be at least partially implemented in order to succeed.
+        /* MyContext::<Hlist![Assum<Sort<Set>>]>::
+            my_judge_type::<Lambda<Rel<Here>,
+                                   App<Lambda<App<Lambda<Sort<Set>, Rel<Here>>,
+                                                  Rel<There<Here>>>,
+                                              Rel<Here>>,
+                                       Rel<Here>>>,
+                            Prod<App<Lambda<Sort<Set>, Rel<Here>>, Rel<Here>>, App<Lambda<Sort<Set>, Rel<Here>>, Rel<There<Here>>>>,
+                            Set>(); */
     }
 }
