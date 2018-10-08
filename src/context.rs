@@ -1851,6 +1851,55 @@ impl<CvPb, Lfts1, T1, C1, E1, Stk1, Lfts2, T2, C2, E2, Stk2, Info>
 {
 }
 
+/// Macro for generating boilerplate trait impls for EqAppr with FFlex only on the left side.
+/// TODO: Find a way to generalize this sort of macro.
+macro_rules! impl_eqappr_fflex_lhs {
+    ([$($param:ident),*], $constr:ty) => {
+        impl<CvPb, Lfts1, Fl1, Stk1, Lfts2, $($param, )*Stk2, Info : Infos>
+            EqAppr<CvPb, Lfts1, FFlex<Fl1>, Stk1, Lfts2, $constr, Stk2> for Info
+            where
+                Info : RefValueCache<Fl1>,
+                Info : EqApprFlex<CvPb,
+                                  Lfts1, FFlex<Fl1>, <Info as RefValueCache<Fl1>>::Output, Stk1,
+                                  Lfts2, $constr, TNone, Stk2>,
+        {
+        }
+    }
+}
+
+impl_eqappr_fflex_lhs!([S], FVal<Sort<S>>);
+// NOTE: It seems clear that FFlex cannot ever reduce to a FRel, since each decl in the
+// environment should be closed over all previous decls in that environment, but Rel means
+// a free variable within the current substitution environment (i.e. a lifted variable)
+// which necessarily comes after the decls.
+// impl_eqappr_fflex_lhs!([N], FVal<Rel<N>>);
+impl_eqappr_fflex_lhs!([T, C, E], FCbn<Lambda<T, C>, E>);
+impl_eqappr_fflex_lhs!([T, C, E], FCbn<Prod<T, C>, E>);
+
+/// Macro for generating boilerplate trait impls for EqAppr with FFlex only on the right side.
+/// TODO: Find a way to generalize this sort of macro.
+macro_rules! impl_eqappr_fflex_rhs {
+    ([$($param:ident),*], $constr:ty) => {
+        impl<CvPb, Lfts1, $($param, )*Stk1, Lfts2, Fl2, Stk2, Info : Infos>
+            EqAppr<CvPb, Lfts1, $constr, Stk1, Lfts2, FFlex<Fl2>, Stk2> for Info
+            where
+                Info : RefValueCache<Fl2>,
+                Info : EqApprFlex<CvPb,
+                                  Lfts1, $constr, TNone, Stk1,
+                                  Lfts2, FFlex<Fl2>, <Info as RefValueCache<Fl2>>::Output, Stk2>,
+        {
+        }
+    }
+}
+
+impl_eqappr_fflex_rhs!([S], FVal<Sort<S>>);
+// NOTE: It seems clear that FFlex cannot ever reduce to a FRel, since each decl in the
+// environment should be closed over all previous decls in that environment, but Rel means
+// a free variable within the current substitution environment (i.e. a lifted variable)
+// which necessarily comes after the decls.
+impl_eqappr_fflex_rhs!([T, C, E], FCbn<Lambda<T, C>, E>);
+impl_eqappr_fflex_rhs!([T, C, E], FCbn<Prod<T, C>, E>);
+
 /* /// Temporary conversion hack: exact equality after weak head reduction.
 impl<CvPb, Lfts1, V1, Stk1, Lfts2, V2, Stk2, Info : Infos>
     EqAppr<CvPb, Lfts1, V1, Stk1, Lfts2, V2, Stk2> for Info
@@ -2285,7 +2334,19 @@ mod test {
                 E2 : Execute<Self>,
                 // E1::Type : ExecuteType<Self>,
                 // E2::Type : ExecuteType<Self>,
-                Self : ConvLeq<E1, E1>
+                Self : ConvLeq<E1::Type, E2::Type>,
+                Self : ConvLeq<E1, E2>,
+        {
+        }
+
+        fn my_conv_sort<E1, E2>()
+            where
+                // E1 : Execute<Self>,
+                // E2 : Execute<Self>,
+                // E1::Type : ExecuteType<Self>,
+                // E2::Type : ExecuteType<Self>,
+                // Self : ConvLeq<E1::Type, E2::Type>,
+                Self : ConvLeq<E1, E2>,
         {
         }
     }
@@ -2312,6 +2373,7 @@ mod test {
         // errors with `the term "Y" has type "X" which should be Set, Prop or Type.`
         // Ctx::my_judge::<Prod<Rel<Here>, Rel<Here>>, Sort<Type>>();
         Ctx::my_judge_sort::<Prod<Sort<Set>, Rel<Here>>, Type>();
+        Ctx::my_judge_sort::<Prod<Sort<Set>, Sort<Set>>, Type>();
         Ctx::my_judge_sort::<Prod<Rel<Here>, Rel<There<Here>>>, Type>();
         Ctx::my_judge_type::<Lambda<Rel<There<Here>>, Rel<Here>>, Prod<Rel<There<Here>>, Rel<There<There<Here>>>>, Set>();
         // Below should error: would require universe larger than Type.
@@ -2359,6 +2421,10 @@ mod test {
             my_judge_sort::<Rel<Here>, Set>();
         MyContext::<Hlist![Decl<Lambda<Rel<There<Here>>, Rel<Here>>, Prod<Rel<There<Here>>, Rel<There<There<Here>>>>>, Assum<Rel<Here>>, Decl<Sort<Set>, Sort<Type>>]>::
             my_judge_sort::<App<Rel<Here>, Rel<There<Here>>>, Set>();
+        MyContext::<Hlist![Decl<Prod<Sort<Set>, Sort<Set>>,
+                                Sort<Type>>,
+                           Assum<Sort<Set>>]>::
+            my_judge_sort::<App<Lambda<Sort<Set>, Prod<Rel<There<Here>>, Rel<There<There<Here>>>>>, Rel<There<Here>>>, Type>();
         MyContext::<Hlist![Assum<Rel<Here>>, Assum<Sort<Set>>]>::
             my_whd::<App<Lambda<Sort<Set>, Rel<Here>>, Rel<There<Here>>>, Rel<There<Here>>>();
         // Below requires conversion to be at least partially implemented in order to succeed.
@@ -2386,6 +2452,9 @@ mod test {
             my_judge_sort::<Prod<Prod<Rel<Here>, Rel<There<Here>>>, Rel<There<Here>>>, _>();
         MyContext::<Hlist![Assum<Sort<Set>>]>::
             my_judge_sort::<Prod<Prod<Rel<Here>, Rel<There<Here>>>, Sort<Set>>, Type>();
+        // Requires conversion to be implemented for rels.
+        MyContext::<Hlist![Assum<Sort<Set>>]>::
+            my_conv::<Lambda<Sort<Set>, Rel<Here>>, App<Lambda<Sort<Set>, Lambda<Sort<Set>, Rel<Here>>>, Rel<Here>>>();
         // Requires conversion to be implemented for app stacks.
         MyContext::<Hlist![Assum<Prod<Rel<Here>, Sort<Set>>>, Assum<Sort<Set>>]>::
             my_judge_type::<Lambda<Prod<Rel<There<Here>>,
@@ -2423,6 +2492,24 @@ mod test {
                                   >,
                             _,
                             _>();
+
+        // Requires conversion to be implemented for Set : Type, and flex on lhs.
+        // (Note: not sure whether we can actually trigger this conversion with just one universe?)
+        MyContext::<Hlist![Decl<Sort<Set>, Sort<Type>>]>::
+            my_conv_sort::<Rel<Here>, Sort<Type>>();
+        // Requires conversion to be implemented for prod, and flex on rhs.
+        MyContext::<Hlist![Decl<Prod<Sort<Set>, Sort<Set>>,
+                                Sort<Type>>,
+                           Assum<Sort<Set>>]>::
+            my_conv::<Prod<App<Lambda<Sort<Set>, Sort<Set>>, Rel<There<Here>>>, Sort<Set>>,
+                      Rel<Here>>();
+        /* // Correctly fails (not convertible):
+        MyContext::<Hlist![Decl<Prod<Sort<Set>, Sort<Set>>,
+                                Sort<Type>>,
+                           Assum<Sort<Set>>]>::
+            my_conv::<Rel<Here>,
+                      Prod<App<Lambda<Sort<Set>, Prod<Rel<There<Here>>, Rel<There<There<Here>>>>>, Rel<There<Here>>>, Sort<Set>>>(); */
+        /*Sort<Set>*/
         //
         // [Γ] (λ : t . b) 〜> [%1 Γ] b
         // e 〜> ([^1 ∘ END] b) 1
