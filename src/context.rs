@@ -20,6 +20,33 @@ pub struct TSome<T> {
 
 pub struct TNone;
 
+pub struct True;
+
+pub struct False;
+
+pub trait IAnd<A> {
+    type Output;
+}
+
+impl<B> IAnd<False> for B {
+    type Output = False;
+}
+
+impl IAnd<True> for False {
+    type Output = False;
+}
+
+impl IAnd<True> for True {
+    type Output = True;
+}
+
+pub trait Equal<T> {
+}
+
+/// EqRefl
+impl<T> Equal<T> for T {
+}
+
 pub trait AtIndex<Index>/* : Selector<Self::Output, Index>*/
 {
     type Output;
@@ -97,7 +124,7 @@ impl<M, N> IAdd<There<N>> for M
     {
         // NOTE: Shouldn't really require unsafe (should be able to
         // construct it Peano-style as { There : rhs.there.add() }...
-        // but we don't have access to the module.
+        // but we don't have access to the module).
         unsafe { mem::transmute(self) }
     } */
 }
@@ -773,7 +800,7 @@ impl<N, LamV, LV, IndexDiffK, Index> SubstRel<N, LamV, LV, There<IndexDiffK>> fo
         // positive, we can get the real output by subtracting 1 from k first (it
         // won't mess up at 0 because (k - 1) - lv ≥ 0).
         // Even though it's not always necessary, we also compute k - lv here to
-        // be able to extract the There pattern (if k - depth ≤ lv
+        // be able to extract the There pattern (if k - depth ≤ lv)
         Rel<Index> : SubstRel2<N, LamV, LV, IndexDiffK, <There<IndexDiffK> as ISub<LV>>::Output>,
         /*  else if k-depth <= lv then lift_substituend depth lamv.(k-depth-1)
 
@@ -906,10 +933,6 @@ impl<Lam, C> Subst1<Lam> for C
         self.substn_many(&lamv, None)
     }
 */
-
-pub struct True;
-
-pub struct False;
 
 pub trait Reds {
     type Delta;
@@ -1140,7 +1163,7 @@ impl<Lfts, C> ToConstr<Lfts> for FVal<C> where C : ExLiftN<Lfts> {
     type Output = <C as ExLiftN<Lfts>>::Output;
 }
 
-/// Flex values also just get lifted to the corresponding Constr (the difference mostly
+/// FFlex values also just get lifted to the corresponding Constr (the difference mostly
 /// matters for conversion, which wants to compare RelKeys for equality without
 /// considering the lifting environment because it knows that if they are equal unlifted
 /// their bodies will also be equal; while for interior substitutions, that's not the case
@@ -1297,11 +1320,14 @@ pub trait Knht<E, T, Stk> {
 
 impl<E, A, B, Stk, Info> Knht<E, App<A, B>, Stk> for Info
     where
-        Stk : WhdAppendStack<B>,
-        Info : Knht<E, A, <Stk as WhdAppendStack<B>>::Output>,
+        B : MkClos<E>,
+        Stk : WhdAppendStack<<B as MkClos<E>>::Output>,
+        Info : Knht<E, A, <Stk as WhdAppendStack<<B as MkClos<E>>::Output>>::Output>,
 {
-    type Head = <Info as Knht<E, A, <Stk as WhdAppendStack<B>>::Output>>::Head;
-    type Stack = <Info as Knht<E, A, <Stk as WhdAppendStack<B>>::Output>>::Stack;
+    type Head =
+        <Info as Knht<E, A, <Stk as WhdAppendStack<<B as MkClos<E>>::Output>>::Output>>::Head;
+    type Stack =
+        <Info as Knht<E, A, <Stk as WhdAppendStack<<B as MkClos<E>>::Output>>::Output>>::Stack;
 }
 
 /// NOTE: This is the only Knht that can yield a FStk; as a result, we can assume
@@ -1335,7 +1361,7 @@ impl<E, S, Stk, Info> Knht<E, Sort<S>, Stk> for Info where Sort<S> : MkClos<E> {
     type Stack = Stk;
 }
 
-/// Decides whether to continue expanding a Flex or not based on the result of RefValueCache.
+/// Decides whether to continue expanding a FFlex or not based on the result of RefValueCache.
 ///
 /// Self is Info, initial FFlex value is C, RefValueCache<C> result is V, stack is Stk.
 /// Returned head is Head, returned stack is Stack.
@@ -1421,10 +1447,10 @@ impl<T, B, E, K, S, Info> Knr<FCbn<Lambda<T, B>, E>, HCons<ZShift<K>, S>> for In
 impl<T, B, E, A, S, Info> Knr<FCbn<Lambda<T, B>, E>, HCons<ZApp<A>, S>> for Info
     where
         E : SubsCons<A>,
-        Info : Knit<B, <E as SubsCons<A>>::Output, S>,
+        Info : Knit<<E as SubsCons<A>>::Output, B, S>,
 {
-    type Head = <Info as Knit<B, <E as SubsCons<A>>::Output, S>>::Head;
-    type Stack = <Info as Knit<B, <E as SubsCons<A>>::Output, S>>::Stack;
+    type Head = <Info as Knit<<E as SubsCons<A>>::Output, B, S>>::Head;
+    type Stack = <Info as Knit<<E as SubsCons<A>>::Output, B, S>>::Stack;
 }
 
 impl<T, C, E, Stk, Info> Knr<FCbn<Prod<T, C>, E>, Stk> for Info {
@@ -1526,6 +1552,59 @@ impl<Flags, Env : Context> CreateClosInfos<Flags> for Env {
     type Info = ClosInfos<Flags, Env::Subs>;
 }
 
+/// Compute the lift to be performed on a term placed in a given stack (Self)
+pub trait ElStack<El> {
+    type Output;
+}
+
+impl<El> ElStack<El> for HNil {
+    type Output = El;
+}
+
+impl<El, N, Stk> ElStack<El> for HCons<ZShift<N>, Stk>
+    where
+        El : EShift<There<N>>, // NOTE: If we switch to allow shifts of 0, switch to N
+        Stk : ElStack<<El as EShift<There<N>>>::Output>,
+{
+    type Output = <Stk as ElStack<<El as EShift<There<N>>>::Output>>::Output;
+}
+
+impl<El, A, Stk> ElStack<El> for HCons<ZApp<A>, Stk> where Stk : ElStack<El> {
+    type Output = <Stk as ElStack<El>>::Output;
+}
+
+/// Modified version of pure_stack that avoids creating a new kind of stack.
+///
+/// Consumes a *reversed* stack Self.  This allows the lifts to be consumed in
+/// reverse, which means that the Lfts returned by PureStack represent all the
+/// Lfts by which the current stack tail would be lifted.  Because the order of
+/// conversion during compare_stack doesn't matter, our going in reverse shouldn't
+/// be a big problem.  Note that the output Stack is in the same order as the input
+/// stack (reversed).
+pub trait PureStack<Lfts> {
+    type Lfts;
+    type Stack;
+}
+
+impl<Lfts, N, Stk> PureStack<Lfts> for HCons<ZShift<N>, Stk>
+    where
+        Lfts : EShift<There<N>>, // NOTE: If we switch to allow shifts of 0, switch to N
+        Stk : PureStack<<Lfts as EShift<There<N>>>::Output>,
+{
+    type Lfts = <Stk as PureStack<<Lfts as EShift<There<N>>>::Output>>::Lfts;
+    type Stack = <Stk as PureStack<<Lfts as EShift<There<N>>>::Output>>::Stack;
+}
+
+impl<Lfts> PureStack<Lfts> for HNil {
+    type Lfts = Lfts;
+    type Stack = Self;
+}
+
+impl<Lfts, A, Stk> PureStack<Lfts> for HCons<ZApp<A>, Stk> {
+    type Lfts = Lfts;
+    type Stack = Self;
+}
+
 /// Reduction functions
 
 pub trait WhdAll<Ctx> where Ctx : Context {
@@ -1541,19 +1620,274 @@ impl<Term, Ctx : Context> WhdAll<Ctx> for Term
     type Output = <<Ctx as CreateClosInfos<BetaDeltaIota>>::Info as WhdVal<Term::Output>>::Output;
 }
 
+/// Conversion
+
+/// Conversion utility functions
+
+/// Self is Infos; only needs to deal with pure stack members.
+pub trait CompareStacks<Lft1, Stk1, Lft2, Stk2> {
+}
+
+/// Empty stacks are equal.
+impl<Lft1, Lft2, Info> CompareStacks<Lft1, HNil, Lft2, HNil> for Info {
+}
+
+/// App stacks are equal if the terms are convertible.
+impl<Lft1, A1, Stk1, Lft2, A2, Stk2, Info> CompareStacks<Lft1, HCons<ZApp<A1>, Stk1>,
+                                                         Lft2, HCons<ZApp<A2>, Stk2>> for Info
+    where
+        Info : CCnv<PbConv, Lft1, Lft2, A1, A2>,
+        Stk1 : PureStack<Lft1>,
+        Stk2 : PureStack<Lft2>,
+        Info : CompareStacks<<Stk1 as PureStack<Lft1>>::Lfts,
+                             <Stk1 as PureStack<Lft1>>::Stack,
+                             <Stk2 as PureStack<Lft2>>::Lfts,
+                             <Stk2 as PureStack<Lft2>>::Stack>,
+{
+}
+
+/// Convertibility of sorts
+
 pub struct PbConv;
 
 pub struct PbCumul;
 
+/// S0 ~ S1 using conversion strategy Self
+pub trait SortCmp<S0, S1> {
+    // type Conv;
+}
+
+/// Syntactically equal sorts are equal for any conversion strategy.
+impl<Pb, S> SortCmp<S, S> for Pb {
+    // type Conv = True;
+}
+
+/// Set is convertible with Type where conversion is cumulative.
+impl SortCmp<Set, Type> for PbCumul {
+    // type Conv = True;
+}
+
+/* /// Set is not convertible with Type where conversion is exact.
+impl SortCmp<Set, Type> for PbConv {
+    type Conv = False;
+}
+
+/// Type is never convertible with Set.
+impl<Pb> SortCmp<Type, Set> for Pb {
+    type Conv = False;
+} */
+
+/// Conversion between [lft1]term1 and [lft2]term2
+pub trait CCnv<CvPb, Lfts1, Lfts2, Term1, Term2> {
+    // type Conv;
+}
+
+impl<CvPb, Lfts1, Lfts2, Term1, Term2, Info : Infos> CCnv<CvPb, Lfts1, Lfts2, Term1, Term2> for Info
+    where
+        Info : WhdStack<Term1, HNil>,
+        Info : WhdStack<Term2, HNil>,
+        Info : EqAppr<CvPb, Lfts1, <Info as WhdStack<Term1, HNil>>::Head,
+                                   <Info as WhdStack<Term1, HNil>>::Stack,
+                            Lfts2, <Info as WhdStack<Term2, HNil>>::Head,
+                                   <Info as WhdStack<Term2, HNil>>::Stack>,
+{
+    // type Conv = Info::Conv;
+}
+
+/// Conversion between [lft1](stk1 ⊢ v1 = ref_value_cache fl1', fl1 = FFlex fl1') and
+///                    [lft2](stk2 ⊢ v2 = ref_value_cache fl2', fl2 = FFlex fl2')
+///
+/// (can also be used in general to reduce one side or the other after computation).
+pub trait EqApprFlex<CvPb, Lfts1, Fl1, V1, Stk1, Lfts2, Fl2, V2, Stk2> {
+    // type Conv;
+}
+
+/// Both None : Fl1 and Fl2 must be syntactically equal, and their stacks must be convertible.
+impl<CvPb, Lfts1, Fl, Stk1, Lfts2, Stk2, Info>
+    EqApprFlex<CvPb, Lfts1, Fl, TNone, Stk1, Lfts2, Fl, TNone, Stk2> for Info
+    where
+        Info : ConvertStacks<Lfts1, Lfts2, Stk1, Stk2>,
+{
+    // type Conv = True;
+}
+
+/// Fl1 = Some, Fl2 = None : reduce V1 and recompare.
+impl<CvPb, Lfts1, Fl1, V1, Stk1, Lfts2, Fl2, Stk2, Info>
+    EqApprFlex<CvPb, Lfts1, Fl1, TSome<V1>, Stk1, Lfts2, Fl2, TNone, Stk2> for Info
+    where
+        Info : WhdStack<V1, Stk1>,
+        Info : EqAppr<CvPb, Lfts1, <Info as WhdStack<V1, Stk1>>::Head,
+                                   <Info as WhdStack<V1, Stk1>>::Stack,
+                            Lfts2, Fl2, Stk2>,
+{
+}
+
+/// Fl1 = None, Fl2 = Some : reduce V2 and recompare.
+impl<CvPb, Lfts1, Fl1, Stk1, Lfts2, Fl2, V2, Stk2, Info>
+    EqApprFlex<CvPb, Lfts1, Fl1, TNone, Stk1, Lfts2, Fl2, TSome<V2>, Stk2> for Info
+    where
+        Info : WhdStack<V2, Stk2>,
+        Info : EqAppr<CvPb, Lfts1, Fl1, Stk1,
+                            Lfts2, <Info as WhdStack<V2, Stk2>>::Head,
+                                   <Info as WhdStack<V2, Stk2>>::Stack>
+{
+}
+
+/// Both Some : reduce both sides and recompare.
+impl<CvPb, Lfts1, Fl1, V1, Stk1, Lfts2, Fl2, V2, Stk2, Info>
+    EqApprFlex<CvPb, Lfts1, Fl1, TSome<V1>, Stk1, Lfts2, Fl2, TSome<V2>, Stk2> for Info
+    where
+        Info : WhdStack<V1, Stk1>,
+        Info : WhdStack<V2, Stk2>,
+        Info : EqAppr<CvPb, Lfts1, <Info as WhdStack<V1, Stk1>>::Head,
+                                   <Info as WhdStack<V1, Stk1>>::Stack,
+                            Lfts2, <Info as WhdStack<V2, Stk2>>::Head,
+                                   <Info as WhdStack<V2, Stk2>>::Stack>,
+{
+}
+
+/// Conversion between [lft1](stk1 ⊢ v1) and [lft2](stk2 ⊢ v2)
+pub trait EqAppr<CvPb, Lfts1, V1, Stk1, Lfts2, V2, Stk2> {
+}
+
+/// NOTE: The pure version of Stk1 and Stk2 is necessarily empty if the term typechecked
+impl<CvPb, Lfts1, S1, Stk1, Lfts2, S2, Stk2, Info>
+    EqAppr<CvPb, Lfts1, FVal<Sort<S1>>, Stk1, Lfts2, FVal<Sort<S2>>, Stk2> for Info
+    where CvPb : SortCmp<S1, S2> {
+}
+
+/// Normal rels (which have no associated body) compare equal only if they are equal in this lift
+/// environment and their stacks are equal.
+impl<CvPb, Lfts1, N1, Stk1, Lfts2, N2, Stk2, Info>
+    EqAppr<CvPb, Lfts1, FVal<Rel<N1>>, Stk1, Lfts2, FVal<Rel<N2>>, Stk2> for Info
+    where
+        Stk1 : ElStack<Lfts1>,
+        Stk2 : ElStack<Lfts2>,
+        <Stk1 as ElStack<Lfts1>>::Output : RelocRel<N1>,
+        <Stk2 as ElStack<Lfts2>>::Output : RelocRel<N2>,
+        <<Stk1 as ElStack<Lfts1>>::Output as RelocRel<N1>>::Output :
+            Equal<<<Stk2 as ElStack<Lfts2>>::Output as RelocRel<N2>>::Output>,
+        Info : ConvertStacks<Lfts1, Lfts2, Stk1, Stk2>,
+{
+}
+
+/// Flexes compare equal only if they are equal (no lift is needed, since we can evaluate them
+/// in the shared environment) and their stacks are equal, or they evaluate to equal terms.
+/// The second subsumes the first, so for now we just always reduce both sides, but for
+/// efficiency we may want to check the first before the second (we also want to try reducing
+/// one side at a time, e.g. the first before the second, according to some oracle order, and
+/// then rechecking, in case we get lucky and arrive at a syntactic equality).
+impl<CvPb, Lfts1, Fl1, Stk1, Lfts2, Fl2, Stk2, Info : Infos>
+    EqAppr<CvPb, Lfts1, FFlex<Fl1>, Stk1, Lfts2, FFlex<Fl2>, Stk2> for Info
+    where
+        Info : RefValueCache<Fl1>,
+        Info : RefValueCache<Fl2>,
+        Info : EqApprFlex<CvPb, Lfts1, FFlex<Fl1>, <Info as RefValueCache<Fl1>>::Output, Stk1,
+                          Lfts2, FFlex<Fl2>, <Info as RefValueCache<Fl2>>::Output, Stk2>,
+{
+}
+
+/// Lambdas compare equal when their types compare equal and their bodies compare equal in the
+/// lifted environment.
+///
+/// TODO: eta expansion (comes after Proj eta and before FFlex eta).
+///
+/// NOTE: Stk1 and Stk2 should actually be *empty* for well-typed terms; we try enforcing it here.
+/// This means we don't need to run ElStack on Lfts1 or Lfts2 either.
+impl<CvPb, Lfts1, T1, B1, E1, /*Stk1, */Lfts2, T2, B2, E2, /*Stk2, */Info>
+    EqAppr<CvPb, Lfts1, FCbn<Lambda<T1, B1>, E1>, /*Stk1*/HNil,
+                 Lfts2, FCbn<Lambda<T2, B2>, E2>, /*Stk2*/HNil> for Info
+    where
+        // Types are convertible (exact conversion)
+        T1 : MkClos<E1>,
+        T2 : MkClos<E2>,
+        Info : CCnv<PbConv, Lfts1, Lfts2, <T1 as MkClos<E1>>::Output, <T2 as MkClos<E2>>::Output>,
+        // Bodies are convertible (in lifted environments with exact conversion)
+        Lfts1 : ELift,
+        Lfts2 : ELift,
+        E1 : SubsLift,
+        E2 : SubsLift,
+        B1 : MkClos<<E1 as SubsLift>::Output>,
+        B2 : MkClos<<E2 as SubsLift>::Output>,
+        Info : CCnv<PbConv, <Lfts1 as ELift>::Output, <Lfts2 as ELift>::Output,
+                            <B1 as MkClos<<E1 as SubsLift>::Output>>::Output,
+                            <B2 as MkClos<<E2 as SubsLift>::Output>>::Output>,
+{
+}
+
+/// Products compare equal when their types compare equal and their bodies compare equal in the
+/// lifted environment.
+///
+/// NOTE: Stk1 and Stk2 should satisfy is_empty for well-typed terms, but it may not actually be
+/// empty.  Thus we need to run ElStack on Lfts1 and Lfts2 (also, we might be throwing away some
+/// things on the stack?  Should investigate further).
+///
+/// NOTE: The types of the Cs are converted exactly but the dependent types are converted according
+///       to the current strategy.
+impl<CvPb, Lfts1, T1, C1, E1, Stk1, Lfts2, T2, C2, E2, Stk2, Info>
+    EqAppr<CvPb, Lfts1, FCbn<Prod<T1, C1>, E1>, Stk1,
+                 Lfts2, FCbn<Prod<T2, C2>, E2>, Stk2> for Info
+    where
+        // Extract lifts from stacks.
+        Stk1 : ElStack<Lfts1>,
+        Stk2 : ElStack<Lfts2>,
+        // Types are convertible (exact conversion)
+        T1 : MkClos<E1>,
+        T2 : MkClos<E2>,
+        Info : CCnv<PbConv, <Stk1 as ElStack<Lfts1>>::Output, <Stk2 as ElStack<Lfts2>>::Output,
+                            <T1 as MkClos<E1>>::Output, <T2 as MkClos<E2>>::Output>,
+        // Bodies are convertible (in lifted environments with current conversion strategy);
+        // Luo's system
+        <Stk1 as ElStack<Lfts1>>::Output : ELift,
+        <Stk2 as ElStack<Lfts2>>::Output : ELift,
+        E1 : SubsLift,
+        E2 : SubsLift,
+        C1 : MkClos<<E1 as SubsLift>::Output>,
+        C2 : MkClos<<E2 as SubsLift>::Output>,
+        Info : CCnv<CvPb, <<Stk1 as ElStack<Lfts1>>::Output as ELift>::Output,
+                          <<Stk2 as ElStack<Lfts2>>::Output as ELift>::Output,
+                          <C1 as MkClos<<E1 as SubsLift>::Output>>::Output,
+                          <C2 as MkClos<<E2 as SubsLift>::Output>>::Output>,
+{
+}
+
+/* /// Temporary conversion hack: exact equality after weak head reduction.
+impl<CvPb, Lfts1, V1, Stk1, Lfts2, V2, Stk2, Info : Infos>
+    EqAppr<CvPb, Lfts1, V1, Stk1, Lfts2, V2, Stk2> for Info
+    where
+        V1 : Equal<V2>,
+        Stk1 : Equal<Stk2>,
+{
+} */
+
+pub trait ConvertStacks<Lft1, Lft2, Stk1, Stk2> {
+}
+
+impl<Lft1, Lft2, Stk1, Stk2, Info> ConvertStacks<Lft1, Lft2, Stk1, Stk2> for Info
+    where
+        // Reverse stacks to satisfy PureStack precondition
+        Stk1 : IntoReverse,
+        Stk2 : IntoReverse,
+        // Purify both stacks to staisfy CompareStacks precondition
+        <Stk1 as IntoReverse>::Output : PureStack<Lft1>,
+        <Stk2 as IntoReverse>::Output : PureStack<Lft2>,
+        // Compare both stacks.
+        Info : CompareStacks<<<Stk1 as IntoReverse>::Output as PureStack<Lft1>>::Lfts,
+                             <<Stk1 as IntoReverse>::Output as PureStack<Lft1>>::Stack,
+                             <<Stk2 as IntoReverse>::Output as PureStack<Lft2>>::Lfts,
+                             <<Stk2 as IntoReverse>::Output as PureStack<Lft2>>::Stack>
+{
+}
+
 pub trait FConv<CvPb, T1, T2> : Context {
 }
 
-/// Temporary conversion hack: exact equality.
-impl<CvPb, /*T1, T2*/T, Ctx> FConv<CvPb, /*T1*/T, /*T2*/T> for Ctx
+impl<CvPb, T1, T2, Ctx : Context> FConv<CvPb, T1, T2> for Ctx
     where
-        // T1 : Execute<Ctx, Type = Self>,
-        // T2 : Execute<Ctx, Type = Self>,
-        Ctx : Context,
+        Ctx : CreateClosInfos<BetaIotaZeta>,
+        T1 : Inject,
+        T2 : Inject,
+        <Ctx as CreateClosInfos<BetaIotaZeta>>::Info : CCnv<CvPb, ElId, ElId, T1::Output, T2::Output>,
 {
 }
 
@@ -1936,6 +2270,24 @@ mod test {
                 //Ty: JudgeOfSort/*<Self>*/,
         {
         }
+
+        fn my_whd<E, V>()
+            where
+                E : Execute<Self>,
+                E::Type : ExecuteType<Self>,
+                E : WhdAll<Self, Output = V>,
+        {
+        }
+
+        fn my_conv<E1, E2>()
+            where
+                E1 : Execute<Self>,
+                E2 : Execute<Self>,
+                // E1::Type : ExecuteType<Self>,
+                // E2::Type : ExecuteType<Self>,
+                Self : ConvLeq<E1, E1>
+        {
+        }
     }
 
     #[test]
@@ -2005,14 +2357,78 @@ mod test {
         // Below requires weak head reduction to be at least partially implemented (for rels) in order to succeed.
         MyContext::<Hlist![Assum<Rel<Here>>, Decl<Sort<Set>, Sort<Type>>]>::
             my_judge_sort::<Rel<Here>, Set>();
+        MyContext::<Hlist![Decl<Lambda<Rel<There<Here>>, Rel<Here>>, Prod<Rel<There<Here>>, Rel<There<There<Here>>>>>, Assum<Rel<Here>>, Decl<Sort<Set>, Sort<Type>>]>::
+            my_judge_sort::<App<Rel<Here>, Rel<There<Here>>>, Set>();
+        MyContext::<Hlist![Assum<Rel<Here>>, Assum<Sort<Set>>]>::
+            my_whd::<App<Lambda<Sort<Set>, Rel<Here>>, Rel<There<Here>>>, Rel<There<Here>>>();
         // Below requires conversion to be at least partially implemented in order to succeed.
-        /* MyContext::<Hlist![Assum<Sort<Set>>]>::
+        MyContext::<Hlist![Assum<Sort<Set>>]>::
             my_judge_type::<Lambda<Rel<Here>,
                                    App<Lambda<App<Lambda<Sort<Set>, Rel<Here>>,
                                                   Rel<There<Here>>>,
                                               Rel<Here>>,
                                        Rel<Here>>>,
-                            Prod<App<Lambda<Sort<Set>, Rel<Here>>, Rel<Here>>, App<Lambda<Sort<Set>, Rel<Here>>, Rel<There<Here>>>>,
-                            Set>(); */
+                            Prod<Rel<Here>, App<Lambda<Sort<Set>, Rel<Here>>, Rel<There<Here>>>>,
+                            Set>();
+        // Below (probably) requires conversion to be implemented for Flex (assuming betaiotazeta
+        // is used during conversion).
+        //
+        // X : Set, Y := X ⊢ λ x : X . (λ y : (λ Z : Set . Z) Y . y) x : X → (λ Z : Set . Z) Y
+        MyContext::<Hlist![Decl<Rel<Here>, Sort<Set>>, Assum<Sort<Set>>]>::
+            my_judge_type::<Lambda<Rel<There<Here>>,
+                                   App<Lambda<App<Lambda<Sort<Set>, Rel<Here>>,
+                                                  Rel<There<Here>>>,
+                                              Rel<Here>>,
+                                       Rel<Here>>>,
+                            Prod<Rel<There<Here>>, App<Lambda<Sort<Set>, Rel<Here>>, Rel<There<Here>>>>,
+                            Set>();
+        MyContext::<Hlist![Assum<Sort<Set>>]>::
+            my_judge_sort::<Prod<Prod<Rel<Here>, Rel<There<Here>>>, Rel<There<Here>>>, _>();
+        MyContext::<Hlist![Assum<Sort<Set>>]>::
+            my_judge_sort::<Prod<Prod<Rel<Here>, Rel<There<Here>>>, Sort<Set>>, Type>();
+        // Requires conversion to be implemented for app stacks.
+        MyContext::<Hlist![Assum<Prod<Rel<Here>, Sort<Set>>>, Assum<Sort<Set>>]>::
+            my_judge_type::<Lambda<Prod<Rel<There<Here>>,
+                                        App<Rel<There<Here>>, Rel<Here>>>,
+                            Lambda<Rel<There<There<Here>>>,
+                                   App<Lambda<App<Rel<There<There<Here>>>,
+                                                  Rel<Here>>,
+                                              Rel<Here>>,
+                                       App<Rel<There<Here>>,
+                                           App<Lambda<Rel<There<There<There<Here>>>>, Rel<Here>>,
+                                               Rel<Here>>
+                                          >
+                                      >
+                                  >>,
+                            _,
+                            _>();
+        // X : Set, Y : (X → X) → Set ⊢
+        //  λ f : (∀ x : X → X . Y x) .
+        //      (λ y : (Y (λ (z : X) . z)) . y)
+        //      (f (λ z : X . (λ (w : X) . w) z))
+        // Requires conversion to be implemented for lambdas and app stacks.
+        MyContext::<Hlist![Assum<Prod<Prod<Rel<Here>, Rel<There<Here>>>, Sort<Set>>>, Assum<Sort<Set>>]>::
+            my_judge_type::<Lambda<Prod<Prod<Rel<There<Here>>, Rel<There<There<Here>>>>,
+                                        App<Rel<There<Here>>, Rel<Here>>>,
+                                   App<Lambda<App<Rel<There<Here>>,
+                                                  Lambda<Rel<There<There<Here>>>,
+                                                         Rel<Here>>>,
+                                              Rel<Here>>,
+                                       App<Rel<Here>,
+                                           Lambda<Rel<There<There<Here>>>,
+                                                  App<Lambda<Rel<There<There<There<Here>>>>, Rel<Here>>,
+                                                      Rel<Here>>>
+                                          >
+                                      >
+                                  >,
+                            _,
+                            _>();
+        //
+        // [Γ] (λ : t . b) 〜> [%1 Γ] b
+        // e 〜> ([^1 ∘ END] b) 1
+        // e = [Γ] (λ : t . b) 〜>
+        // e = ([^1 ∘ END] ([Γ] (λ : t . b))) 1 〜>
+        //     [(^1 ∘ Γ).1] b =
+        //     [%1 Γ] b
     }
 }
