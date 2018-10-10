@@ -2632,8 +2632,8 @@ mod test {
         // Requires conversion to be implemented for lambdas on rhs (eta expansion)
         // X : Set, Y : ((X → X) → X → X) → Set ⊢
         //  λ f : (∀ x : (X → X) → X → X . Y x) .
-        //      (λ y : (Y (λ (z : X → X) . z)) . y)
-        //      (f (λ z : X → X . (λ (w : X) . z w)))
+        //      (λ y : (Y (λ (z : X → X) . λ (w : X). z w)) . y)
+        //      (f (λ z : X → X . z))
         MyContext::<Hlist![Assum<Prod<Prod<Prod<Rel<Here>, Rel<There<Here>>>,
                                            Prod<Rel<There<Here>>, Rel<There<There<Here>>>>>,
                                       Sort<Set>>>,
