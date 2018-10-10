@@ -515,7 +515,7 @@ pub struct Context<Subs : HList> {
 } */
 
 pub trait RawContext {
-    type Subs : HList;
+    type Subs;
 }
 
 impl<T : HList> RawContext for T {
@@ -879,7 +879,7 @@ impl<N, LamV, LV, Index> SubstRec<N, LamV, LV> for Rel<Index>
     }
 */
 /// Reminder : N = Here means None, and N = Theirs<N'> gives the actual N' we want.
-pub trait SubstNMany<LamV : HList, N> {
+pub trait SubstNMany<LamV, N> {
     type Output;
 }
 
@@ -889,7 +889,7 @@ impl<N, C> SubstNMany<HNil, N> for C
 }
 
 /// FIXME: Pass around PeanoLen-1 (which is actually the proper length).
-impl<Lam, LamV : HList, N, C> SubstNMany<HCons<Lam, LamV>, N> for C
+impl<Lam, LamV, N, C> SubstNMany<HCons<Lam, LamV>, N> for C
     where
         LamV : PeanoLen,
         C : SubstRec<N, HCons<Lam, LamV>, <HCons<Lam, LamV> as PeanoLen>::PeanoLen>,
@@ -952,7 +952,7 @@ impl Reds for BetaIotaZeta {
 
 pub trait Infos {
     type Flags : Reds;
-    type Rels : HList;
+    type Rels;
 }
 
 pub trait RefValueCacheRel<N> {
@@ -978,7 +978,7 @@ impl<Body, Type, N> RefValueCacheRel<N> for TSome<Decl<Body, Type>>
     type Output = TSome<<<Body as Lift<N>>::Output as Inject>::Output>;
 }
 
-pub trait RefValueCache<Ref> : Infos {
+pub trait RefValueCache<Ref> {
     type Output;
 }
 
@@ -1249,6 +1249,19 @@ impl<M, Stk : IntoReverse> FAppStack<M> for Stk {
     type Output = FStk<M, <Stk as IntoReverse>::Output>;
 }
 
+/// Eta expansion: add a reference to implicit surrounding lambda at end of stack
+pub trait EtaExpandStack {
+    type Output;
+}
+
+/// We append rather than use explicit induction.
+impl<Stk> EtaExpandStack for Stk
+    where
+        Stk : Add<Hlist![ZShift<Here>, ZApp<FVal<Rel<Here>>>]>,
+{
+    type Output = Stk::Output;
+}
+
 /// A machine that inspects the head of a term until it finds an
 /// atom or a subterm that may produce a redex (abstraction,
 /// constructor, cofix, letin, constant), or a neutral term (product,
@@ -1346,7 +1359,8 @@ impl<E, N, Stk, Info> Knht<E, Rel<N>, Stk> for Info
     type Stack = <Info as Knh<<Rel<N> as MkClos<E>>::Output, Stk>>::Stack;
 }
 
-impl<E, T, B, Stk, Info> Knht<E, Lambda<T, B>, Stk> for Info where Lambda<T, B> : MkClos<E> {
+impl<E, T, B, Stk, Info>
+    Knht<E, Lambda<T, B>, Stk> for Info where Lambda<T, B> : MkClos<E> {
     type Head = <Lambda<T, B> as MkClos<E>>::Output;
     type Stack = Stk;
 }
@@ -1543,7 +1557,7 @@ pub struct ClosInfos<Flags, Rels> {
     rels: Rels,
 }
 
-impl<Flags : Reds, Rels : HList> Infos for ClosInfos<Flags, Rels> {
+impl<Flags : Reds, Rels> Infos for ClosInfos<Flags, Rels> {
     type Flags = Flags;
     type Rels = Rels;
 }
@@ -1607,11 +1621,11 @@ impl<Lfts, A, Stk> PureStack<Lfts> for HCons<ZApp<A>, Stk> {
 
 /// Reduction functions
 
-pub trait WhdAll<Ctx> where Ctx : Context {
+pub trait WhdAll<Ctx> {
     type Output;
 }
 
-impl<Term, Ctx : Context> WhdAll<Ctx> for Term
+impl<Term, Ctx> WhdAll<Ctx> for Term
     where
         Ctx : CreateClosInfos<BetaDeltaIota>,
         Term : Inject,
@@ -1682,7 +1696,14 @@ pub trait CCnv<CvPb, Lfts1, Lfts2, Term1, Term2> {
     // type Conv;
 }
 
-impl<CvPb, Lfts1, Lfts2, Term1, Term2, Info : Infos> CCnv<CvPb, Lfts1, Lfts2, Term1, Term2> for Info
+/// Conversion between [lft1](stk1 ⊢ v1) and [lft2](stk2 ⊢ v2)
+pub trait EqAppr<CvPb, Lfts1, V1, Stk1, Lfts2, V2, Stk2> {
+}
+
+pub trait ConvertStacks<Lft1, Lft2, Stk1, Stk2> {
+}
+
+impl<CvPb, Lfts1, Lfts2, Term1, Term2, Info> CCnv<CvPb, Lfts1, Lfts2, Term1, Term2> for Info
     where
         Info : WhdStack<Term1, HNil>,
         Info : WhdStack<Term2, HNil>,
@@ -1746,10 +1767,6 @@ impl<CvPb, Lfts1, Fl1, V1, Stk1, Lfts2, Fl2, V2, Stk2, Info>
 {
 }
 
-/// Conversion between [lft1](stk1 ⊢ v1) and [lft2](stk2 ⊢ v2)
-pub trait EqAppr<CvPb, Lfts1, V1, Stk1, Lfts2, V2, Stk2> {
-}
-
 /// NOTE: The pure version of Stk1 and Stk2 is necessarily empty if the term typechecked
 impl<CvPb, Lfts1, S1, Stk1, Lfts2, S2, Stk2, Info>
     EqAppr<CvPb, Lfts1, FVal<Sort<S1>>, Stk1, Lfts2, FVal<Sort<S2>>, Stk2> for Info
@@ -1777,7 +1794,7 @@ impl<CvPb, Lfts1, N1, Stk1, Lfts2, N2, Stk2, Info>
 /// efficiency we may want to check the first before the second (we also want to try reducing
 /// one side at a time, e.g. the first before the second, according to some oracle order, and
 /// then rechecking, in case we get lucky and arrive at a syntactic equality).
-impl<CvPb, Lfts1, Fl1, Stk1, Lfts2, Fl2, Stk2, Info : Infos>
+impl<CvPb, Lfts1, Fl1, Stk1, Lfts2, Fl2, Stk2, Info>
     EqAppr<CvPb, Lfts1, FFlex<Fl1>, Stk1, Lfts2, FFlex<Fl2>, Stk2> for Info
     where
         Info : RefValueCache<Fl1>,
@@ -1789,8 +1806,6 @@ impl<CvPb, Lfts1, Fl1, Stk1, Lfts2, Fl2, Stk2, Info : Infos>
 
 /// Lambdas compare equal when their types compare equal and their bodies compare equal in the
 /// lifted environment.
-///
-/// TODO: eta expansion (comes after Proj eta and before FFlex eta).
 ///
 /// NOTE: Stk1 and Stk2 should actually be *empty* for well-typed terms; we try enforcing it here.
 /// This means we don't need to run ElStack on Lfts1 or Lfts2 either.
@@ -1851,11 +1866,89 @@ impl<CvPb, Lfts1, T1, C1, E1, Stk1, Lfts2, T2, C2, E2, Stk2, Info>
 {
 }
 
+/// Macro for generating boilerplate trait impls for EqAppr with FLambda only on the left side.
+/// TODO: Find a way to generalize this sort of macro.
+macro_rules! impl_eqappr_flambda_lhs {
+    ([$($param:ident),*], $constr:ty) => {
+        /// Eta-expansion on the fly
+        ///
+        /// NOTE: Stk1 should be *empty* here for well-typed terms; we try enforcing it here.
+        impl<CvPb, Lfts1, T1, B1, E1, Lfts2, $($param, )*Stk2, Info>
+            EqAppr<CvPb, Lfts1, FCbn<Lambda<T1, B1>, E1>, HNil, Lfts2, $constr, Stk2> for Info
+            where
+                // Body of Lambda is convertible with eta expanded non-Lambda term (in lifted
+                // environments with exact conversion).
+                //
+                // NOTE: We don't try to convert the type parameter here, which may or may not lead
+                //       to problems down the line.  TODO: see if we can get this to show up in the
+                //       Coq kernel.
+                Lfts1 : ELift,
+                Lfts2 : ELift,
+                E1 : SubsLift,
+                B1 : MkClos<<E1 as SubsLift>::Output>,
+                Stk2 : EtaExpandStack,
+                // We call EqApprFlex just to reduce both sides before recursing.
+                Info : EqApprFlex<PbConv, <Lfts1 as ELift>::Output, (),
+                                          TSome<<B1 as MkClos<<E1 as SubsLift>::Output>>::Output>,
+                                          HNil,
+                                          <Lfts2 as ELift>::Output, (),
+                                          TSome<$constr>, <Stk2 as EtaExpandStack>::Output>,
+        {
+        }
+    }
+}
+
+// NOTE: Sorts do not have product types so we should never try to convert them with Lambdas.
+// impl_eqappr_flambda_lhs!([S], FVal<Sort<S>>);
+impl_eqappr_flambda_lhs!([N], FVal<Rel<N>>);
+impl_eqappr_flambda_lhs!([Fl], FFlex<Fl>);
+// NOTE: Products do not have product types so we should never try to convert them with Lambdas.
+// impl_eqappr_flambda_lhs!([T, C, E], FCbn<Prod<T, C>, E>);
+
+/// Macro for generating boilerplate trait impls for EqAppr with FLambda only on the right side.
+/// TODO: Find a way to generalize this sort of macro.
+macro_rules! impl_eqappr_flambda_rhs {
+    ([$($param:ident),*], $constr:ty) => {
+        /// Eta-expansion on the fly
+        ///
+        /// NOTE: Stk2 should be *empty* here for well-typed terms; we try enforcing it here.
+        impl<CvPb, Lfts1, $($param, )*Stk1, Lfts2, T2, B2, E2, Info>
+            EqAppr<CvPb, Lfts1, $constr, Stk1, Lfts2, FCbn<Lambda<T2, B2>, E2>, HNil> for Info
+            where
+                // Body of Lambda is convertible with eta expanded non-Lambda term (in lifted
+                // environments with exact conversion).
+                //
+                // NOTE: We don't try to convert the type parameter here, which may or may not lead
+                //       to problems down the line.  TODO: see if we can get this to show up in the
+                //       Coq kernel.
+                Lfts1 : ELift,
+                Lfts2 : ELift,
+                E2 : SubsLift,
+                B2 : MkClos<<E2 as SubsLift>::Output>,
+                Stk1 : EtaExpandStack,
+                // We call EqApprFlex just to reduce both sides before recursing.
+                Info : EqApprFlex<PbConv, <Lfts1 as ELift>::Output, (),
+                                          TSome<$constr>, <Stk1 as EtaExpandStack>::Output,
+                                          <Lfts2 as ELift>::Output, (),
+                                          TSome<<B2 as MkClos<<E2 as SubsLift>::Output>>::Output>,
+                                          HNil>,
+        {
+        }
+    }
+}
+
+// NOTE: Sorts do not have product types so we should never try to convert them with Lambdas.
+// impl_eqappr_flambda_rhs!([S], FVal<Sort<S>>);
+impl_eqappr_flambda_rhs!([N], FVal<Rel<N>>);
+impl_eqappr_flambda_rhs!([Fl], FFlex<Fl>);
+// NOTE: Products do not have product types so we should never try to convert them with Lambdas.
+// impl_eqappr_flambda_rhs!([T, C, E], FCbn<Prod<T, C>, E>);
+
 /// Macro for generating boilerplate trait impls for EqAppr with FFlex only on the left side.
 /// TODO: Find a way to generalize this sort of macro.
 macro_rules! impl_eqappr_fflex_lhs {
     ([$($param:ident),*], $constr:ty) => {
-        impl<CvPb, Lfts1, Fl1, Stk1, Lfts2, $($param, )*Stk2, Info : Infos>
+        impl<CvPb, Lfts1, Fl1, Stk1, Lfts2, $($param, )*Stk2, Info>
             EqAppr<CvPb, Lfts1, FFlex<Fl1>, Stk1, Lfts2, $constr, Stk2> for Info
             where
                 Info : RefValueCache<Fl1>,
@@ -1873,14 +1966,15 @@ impl_eqappr_fflex_lhs!([S], FVal<Sort<S>>);
 // a free variable within the current substitution environment (i.e. a lifted variable)
 // which necessarily comes after the decls.
 // impl_eqappr_fflex_lhs!([N], FVal<Rel<N>>);
-impl_eqappr_fflex_lhs!([T, C, E], FCbn<Lambda<T, C>, E>);
+// NOTE: Lambdas come first in Coq's reduction.
+// impl_eqappr_fflex_lhs!([T, C, E], FCbn<Lambda<T, C>, E>);
 impl_eqappr_fflex_lhs!([T, C, E], FCbn<Prod<T, C>, E>);
 
 /// Macro for generating boilerplate trait impls for EqAppr with FFlex only on the right side.
 /// TODO: Find a way to generalize this sort of macro.
 macro_rules! impl_eqappr_fflex_rhs {
     ([$($param:ident),*], $constr:ty) => {
-        impl<CvPb, Lfts1, $($param, )*Stk1, Lfts2, Fl2, Stk2, Info : Infos>
+        impl<CvPb, Lfts1, $($param, )*Stk1, Lfts2, Fl2, Stk2, Info>
             EqAppr<CvPb, Lfts1, $constr, Stk1, Lfts2, FFlex<Fl2>, Stk2> for Info
             where
                 Info : RefValueCache<Fl2>,
@@ -1897,20 +1991,19 @@ impl_eqappr_fflex_rhs!([S], FVal<Sort<S>>);
 // environment should be closed over all previous decls in that environment, but Rel means
 // a free variable within the current substitution environment (i.e. a lifted variable)
 // which necessarily comes after the decls.
-impl_eqappr_fflex_rhs!([T, C, E], FCbn<Lambda<T, C>, E>);
+// impl_eqappr_fflex_rhs!([N], FVal<Rel<N>>);
+// NOTE: Lambdas come first in Coq's reduction.
+// impl_eqappr_fflex_rhs!([T, C, E], FCbn<Lambda<T, C>, E>);
 impl_eqappr_fflex_rhs!([T, C, E], FCbn<Prod<T, C>, E>);
 
 /* /// Temporary conversion hack: exact equality after weak head reduction.
-impl<CvPb, Lfts1, V1, Stk1, Lfts2, V2, Stk2, Info : Infos>
+impl<CvPb, Lfts1, V1, Stk1, Lfts2, V2, Stk2, Info>
     EqAppr<CvPb, Lfts1, V1, Stk1, Lfts2, V2, Stk2> for Info
     where
         V1 : Equal<V2>,
         Stk1 : Equal<Stk2>,
 {
 } */
-
-pub trait ConvertStacks<Lft1, Lft2, Stk1, Stk2> {
-}
 
 impl<Lft1, Lft2, Stk1, Stk2, Info> ConvertStacks<Lft1, Lft2, Stk1, Stk2> for Info
     where
@@ -1928,10 +2021,10 @@ impl<Lft1, Lft2, Stk1, Stk2, Info> ConvertStacks<Lft1, Lft2, Stk1, Stk2> for Inf
 {
 }
 
-pub trait FConv<CvPb, T1, T2> : Context {
+pub trait FConv<CvPb, T1, T2> {
 }
 
-impl<CvPb, T1, T2, Ctx : Context> FConv<CvPb, T1, T2> for Ctx
+impl<CvPb, T1, T2, Ctx> FConv<CvPb, T1, T2> for Ctx
     where
         Ctx : CreateClosInfos<BetaIotaZeta>,
         T1 : Inject,
@@ -1941,14 +2034,13 @@ impl<CvPb, T1, T2, Ctx : Context> FConv<CvPb, T1, T2> for Ctx
 }
 
 /// Self is the type context.
-pub trait ConvLeq<T1, T2> : Context /*: JudgeOfSort*/ {
+pub trait ConvLeq<T1, T2>/*: JudgeOfSort*/ {
 }
 
 impl<T1, T2, Ctx> ConvLeq<T1, T2> for Ctx
     where
         // T1 : Execute<Ctx, Type = Self>,
         // T2 : Execute<Ctx, Type = Self>,
-        Ctx : Context,
         Ctx : FConv<PbCumul, T1, T2>,
 {
 }
@@ -1964,11 +2056,11 @@ impl JudgeOfSort for Set {}
 
 impl JudgeOfSort for Type {}
 
-pub trait TypeJudgment<Ctx> where Ctx : Context {
+pub trait TypeJudgment {
     type Sort /*where Sort<Self::Sort>*/ : JudgeOfSort;
 }
 
-impl<S, Ctx : Context> TypeJudgment<Ctx> for Sort<S>
+impl<S> TypeJudgment for Sort<S>
     where S : JudgeOfSort,
 {
     type Sort = S;
@@ -1980,21 +2072,20 @@ impl<S, Ctx : Context> TypeJudgment<Ctx> for Sort<S>
     } */
 }
 
-pub trait JudgeOfType<Ctx> where Ctx : Context {
+pub trait JudgeOfType {
     type Sort /*where Sort<Self::Sort>*/ : JudgeOfSort;
 }
 
-impl<Ctx : Context> JudgeOfType<Ctx> for Sort<Set> {
+impl JudgeOfType for Sort<Set> {
     type Sort = Type;
 }
 
-pub trait JudgeOfApply<H, HJ, Ctx> where Ctx : Context {
+pub trait JudgeOfApply<H, HJ, Ctx> {
     type Type;
 }
 
 impl<Ctx, H, HJ, T, C> JudgeOfApply<H, HJ, Ctx> for Prod<T, C>
     where
-        Ctx : Context,
         Ctx : ConvLeq<HJ, T>,
         C : Subst1<H>,
 /*
@@ -2026,7 +2117,7 @@ impl<Ctx, H, HJ, T, C> JudgeOfApply<H, HJ, Ctx> for Prod<T, C>
     type Type = C::Output;
 }
 
-pub trait SortOfProduct<T, C> : Context
+pub trait SortOfProduct<T, C>
     where
         /*Sort<T>*/T : JudgeOfSort,
         /*Sort<C>*/C : JudgeOfSort,
@@ -2034,19 +2125,19 @@ pub trait SortOfProduct<T, C> : Context
     type Sort /*where Sort<Self::Sort>*/ : JudgeOfSort;
 }
 
-impl<Ctx : Context> SortOfProduct<Type, Type> for Ctx {
+impl<Ctx> SortOfProduct<Type, Type> for Ctx {
     type Sort = Type;
 }
 
-impl<Ctx : Context> SortOfProduct<Type, Set> for Ctx {
+impl<Ctx> SortOfProduct<Type, Set> for Ctx {
     type Sort = Type;
 }
 
-impl<Ctx : Context> SortOfProduct<Set, Type> for Ctx {
+impl<Ctx> SortOfProduct<Set, Type> for Ctx {
     type Sort = Type;
 }
 
-impl<Ctx : Context> SortOfProduct<Set, Set> for Ctx {
+impl<Ctx> SortOfProduct<Set, Set> for Ctx {
     type Sort = Set;
 }
 /*
@@ -2111,14 +2202,13 @@ impl<Index, A, Args : HList, Ctx : Context> DecomposeApp<Rel<Index>, Args> for C
     type Args = <Ctx as DecomposeApp<F, HCons<A, Args>>>::Args;
 } */
 
-pub trait Execute<Ctx> where Ctx : Context {
+pub trait Execute<Ctx> {
     type Type : /*JudgeOfSort + *//*?Sized*/;// : JudgeOfSort<Ctx> + ?Sized;
 }
 
 impl<S, Ctx> Execute<Ctx> for Sort<S>
     where
-        Ctx : Context,
-        Self : JudgeOfType<Ctx>,
+        Self : JudgeOfType,
         // Ctx : Execute<Ty::Unlift, Output=Set>,
         // Ctx::Subs : AtIndex</*::Unlifted*/Index>,
         // <Ctx::Subs as AtIndex<Index>>::Output: RDecl,
@@ -2126,12 +2216,11 @@ impl<S, Ctx> Execute<Ctx> for Sort<S>
         // <<<Ctx::Subs as AtIndex<Index>>::Output as RDecl>::Type as Lift<Index>>::Output : JudgeOfSort<Ctx>
         // Ty : UnLift<Index>,
 {
-    type Type = Sort<<Self as JudgeOfType<Ctx>>::Sort>;
+    type Type = Sort<<Self as JudgeOfType>::Sort>;
 }
 
-impl<Index, Ctx> Execute<Ctx> for Rel<Index>
+impl<Index, Ctx : Context> Execute<Ctx> for Rel<Index>
     where
-        Ctx : Context,
         // Ctx : Execute<Ty::Unlift, Output=Set>,
         Ctx::Subs : AtIndex</*::Unlifted*/Index>,
         <Ctx::Subs as AtIndex<Index>>::Output: RDecl,
@@ -2143,13 +2232,12 @@ impl<Index, Ctx> Execute<Ctx> for Rel<Index>
 
 impl<F, A, Ctx> Execute<Ctx> for App<F, A>
     where
-        Ctx: Context,
         // Ctx : DecomposeApp<F, HCons<A, HNil>>,
-        A: Execute<Ctx>,
-        F: Execute<Ctx>,
+        A : Execute<Ctx>,
+        F : Execute<Ctx>,
         F::Type : WhdAll<Ctx>,
         <F::Type as WhdAll<Ctx>>::Output : JudgeOfApply<A, A::Type, Ctx>,
-        // <Term::Type as WhdAll<Ctx>>::Output : TypeJudgment<Ctx>,
+        // <Term::Type as WhdAll<Ctx>>::Output : TypeJudgment,
         // <F as Execute<Ctx>>::Type : WhdAll<Ctx>,
 /*
     fn judge_of_apply<'a, 'e, I>(&'e mut self, f: &Constr, funj: &Constr, argjv: I
@@ -2220,11 +2308,10 @@ impl<F, A, Ctx> Execute<Ctx> for App<F, A>
 */
 }
 
-impl<T, C, Ctx> Execute<Ctx> for Lambda<T, C>
+impl<T, C, Ctx : Context> Execute<Ctx> for Lambda<T, C>
     where
-        Ctx: Context,
-        T: ExecuteType<Ctx>,
-        C: Execute<HCons<Assum<T>, /*<Ctx as Generic*/<Ctx as RawContext>::Subs/*>::Repr*/>>,
+        T : ExecuteType<Ctx>,
+        C : Execute<HCons<Assum<T>, /*<Ctx as Generic*/<Ctx as RawContext>::Subs/*>::Repr*/>>,
                 /*let (ref name, ref c1, ref c2) = **o;
                 let mut ty = Constr::Rel(0); // dummy
                 let (env, _) = self.execute_type(c1, &mut ty)?;
@@ -2240,13 +2327,12 @@ impl<T, C, Ctx> Execute<Ctx> for Lambda<T, C>
     type Type = Prod<T, <C as Execute<HCons<Assum<T>, /*<Ctx as Generic*/<Ctx as RawContext>::Subs/*>::Repr*/>>>::Type>;
 }
 
-impl<T, C, Ctx> Execute<Ctx> for Prod<T, C>
+impl<T, C, Ctx : Context> Execute<Ctx> for Prod<T, C>
     where
-        Ctx: Context,
-        T: ExecuteType<Ctx>,
-        C: ExecuteType<HCons<Assum<T>, /*<Ctx as Generic*/<Ctx as RawContext>::Subs/*>::Repr*/>>,
-        Ctx: SortOfProduct<<T as ExecuteType<Ctx>>::Sort,
-                           <C as ExecuteType<HCons<Assum<T>, /*<Ctx as Generic*/<Ctx as RawContext>::Subs/*>::Repr*/>>>::Sort>,
+        T : ExecuteType<Ctx>,
+        C : ExecuteType<HCons<Assum<T>, /*<Ctx as Generic*/<Ctx as RawContext>::Subs/*>::Repr*/>>,
+        Ctx : SortOfProduct<<T as ExecuteType<Ctx>>::Sort,
+                            <C as ExecuteType<HCons<Assum<T>, <Ctx as RawContext>::Subs>>>::Sort>,
 {
     type Type = Sort<<Ctx as SortOfProduct<<T as ExecuteType<Ctx>>::Sort,
                                            <C as ExecuteType<HCons<Assum<T>, /*<Ctx as Generic*/<Ctx as RawContext>::Subs/*>::Repr*/>>>::Sort>>::Sort>;
@@ -2266,8 +2352,7 @@ impl<T, C, Ctx> Execute<Ctx> for Prod<T, C>
                 Ok((env, Constr::Sort(ORef(Arc::from(sort)))))
             },*/
 
-pub trait ExecuteType<Ctx> where
-    Ctx : Context,
+pub trait ExecuteType<Ctx>
     // Self: Execute<Ctx>,
     // Self::Type : JudgeOfSort/*<Ctx>*/,
 {
@@ -2276,19 +2361,18 @@ pub trait ExecuteType<Ctx> where
 
 impl<Term, Ctx> ExecuteType<Ctx> for Term
     where
-        Ctx : Context,
         Term : Execute<Ctx>,
         Term::Type : WhdAll<Ctx>,
-        <Term::Type as WhdAll<Ctx>>::Output : TypeJudgment<Ctx>,
+        <Term::Type as WhdAll<Ctx>>::Output : TypeJudgment,
         /*Term : Execute<Ctx>,
         Term::Type : JudgeOfSort/*<Ctx>*/,*/
 {
-    type Sort = <<Term::Type as WhdAll<Ctx>>::Output as TypeJudgment<Ctx>>::Sort;//<Term::Type as JudgeOfSort>::Sort;
+    type Sort = <<Term::Type as WhdAll<Ctx>>::Output as TypeJudgment>::Sort;//<Term::Type as JudgeOfSort>::Sort;
 }
 
 #[cfg(test)]
 mod test {
-    use frunk::hlist::{HCons, HList, HNil, LiftFrom, Selector};
+    use frunk::hlist::{HCons, HNil, LiftFrom, Selector};
     use frunk::indices::{Here, There};
     use super::*;
 
@@ -2297,17 +2381,17 @@ mod test {
         subs: Subs,
     }
 
-    impl<Subs> RawContext for MyContext<Subs> where Subs : HList {
+    impl<Subs> RawContext for MyContext<Subs> {
         type Subs = Subs;
     }
 
-    impl<Subs> MyContext<Subs> where Subs : HList {
+    impl<Subs> MyContext<Subs> {
         fn my_judge_sort<Ty, S>(/*, x : X*/)
             where
                 Ty : ExecuteType<Self, Sort = S>,
                 S : JudgeOfSort,
                 //Ty : ExecuteType<Self>,
-                //Ty: TypeJudgment/*<Self>*/,
+                //Ty: TypeJudgment,
         {
         }
 
@@ -2374,6 +2458,7 @@ mod test {
         // Ctx::my_judge::<Prod<Rel<Here>, Rel<Here>>, Sort<Type>>();
         Ctx::my_judge_sort::<Prod<Sort<Set>, Rel<Here>>, Type>();
         Ctx::my_judge_sort::<Prod<Sort<Set>, Sort<Set>>, Type>();
+        Ctx::my_judge_sort::<Prod<Rel<There<Here>>, Sort<Set>>, Type>();
         Ctx::my_judge_sort::<Prod<Rel<Here>, Rel<There<Here>>>, Type>();
         Ctx::my_judge_type::<Lambda<Rel<There<Here>>, Rel<Here>>, Prod<Rel<There<Here>>, Rel<There<There<Here>>>>, Set>();
         // Below should error: would require universe larger than Type.
@@ -2414,6 +2499,20 @@ mod test {
             my_judge_type::<Rel<Here>, /*Sort<Set>*/Rel<There<Here>>, Type>();*/
         MyContext::<Hlist![Assum<Rel<Here>>, Decl<App<Lambda<Sort<Type>, Rel<Here>>, Sort<Set>>, Sort<Type>>]>::
             my_judge_type::<Rel<Here>, /*Sort<Set>*/Rel<There<Here>>, Type>();
+        Ctx::my_judge_type::<Lambda<Sort<Set>,
+                                    Lambda<Prod<Sort<Set>, Rel<There<Here>>>,
+                                           App<Rel<Here>, Rel<There<Here>>>>>,
+                             Prod<Sort<Set>,
+                                  Prod<Prod<Sort<Set>, Rel<There<Here>>>,
+                                       Rel<There<Here>>>>,
+                             Type>();
+        Ctx::my_judge_type::<Lambda<Sort<Set>,
+                                    Lambda<Prod<Sort<Set>, Rel<Here>>,
+                                           App<Rel<Here>, Rel<There<Here>>>>>,
+                             Prod<Sort<Set>,
+                                  Prod<Prod<Sort<Set>, Rel<Here>>,
+                                       Rel<There<Here>>>>,
+                             Type>();
         // Below should error: would require a universe larger than Type.
         // Ctx::my_judge_type::<Prod<Sort<Type>, Rel<There<Here>>>, Sort<Type>, _>();
         // Below requires weak head reduction to be at least partially implemented (for rels) in order to succeed.
@@ -2492,7 +2591,6 @@ mod test {
                                   >,
                             _,
                             _>();
-
         // Requires conversion to be implemented for Set : Type, and flex on lhs.
         // (Note: not sure whether we can actually trigger this conversion with just one universe?)
         MyContext::<Hlist![Decl<Sort<Set>, Sort<Type>>]>::
@@ -2503,19 +2601,67 @@ mod test {
                            Assum<Sort<Set>>]>::
             my_conv::<Prod<App<Lambda<Sort<Set>, Sort<Set>>, Rel<There<Here>>>, Sort<Set>>,
                       Rel<Here>>();
+        // Requires conversion to be implemented for lambdas on lhs (eta expansion)
+        // X : Set, Y : ((X → X) → X → X) → Set ⊢
+        //  λ f : (∀ x : (X → X) → X → X . Y x) .
+        //      (λ y : (Y (λ (z : X → X) . z)) . y)
+        //      (f (λ z : X → X . (λ (w : X) . z w)))
+        MyContext::<Hlist![Assum<Prod<Prod<Prod<Rel<Here>, Rel<There<Here>>>,
+                                           Prod<Rel<There<Here>>, Rel<There<There<Here>>>>>,
+                                      Sort<Set>>>,
+                           Assum<Sort<Set>>]>::
+            my_judge_type::<Lambda<Prod<Prod<Prod<Rel<There<Here>>, Rel<There<There<Here>>>>,
+                                             Prod<Rel<There<There<Here>>>,
+                                                  Rel<There<There<There<Here>>>>>>,
+                                        App<Rel<There<Here>>, Rel<Here>>>,
+                                   App<Lambda<App<Rel<There<Here>>,
+                                                  Lambda<Prod<Rel<There<There<Here>>>,
+                                                              Rel<There<There<There<Here>>>>>,
+                                                         Rel<Here>>>,
+                                              Rel<Here>>,
+                                       App<Rel<Here>,
+                                           Lambda<Prod<Rel<There<There<Here>>>,
+                                                       Rel<There<There<There<Here>>>>>,
+                                                  Lambda<Rel<There<There<There<Here>>>>,
+                                                         App<Rel<There<Here>>, Rel<Here>>>>
+                                          >
+                                      >
+                                  >,
+                            _,
+                            _>();
+        // Requires conversion to be implemented for lambdas on rhs (eta expansion)
+        // X : Set, Y : ((X → X) → X → X) → Set ⊢
+        //  λ f : (∀ x : (X → X) → X → X . Y x) .
+        //      (λ y : (Y (λ (z : X → X) . z)) . y)
+        //      (f (λ z : X → X . (λ (w : X) . z w)))
+        MyContext::<Hlist![Assum<Prod<Prod<Prod<Rel<Here>, Rel<There<Here>>>,
+                                           Prod<Rel<There<Here>>, Rel<There<There<Here>>>>>,
+                                      Sort<Set>>>,
+                           Assum<Sort<Set>>]>::
+            my_judge_type::<Lambda<Prod<Prod<Prod<Rel<There<Here>>, Rel<There<There<Here>>>>,
+                                             Prod<Rel<There<There<Here>>>,
+                                                  Rel<There<There<There<Here>>>>>>,
+                                        App<Rel<There<Here>>, Rel<Here>>>,
+                                   App<Lambda<App<Rel<There<Here>>,
+                                                  Lambda<Prod<Rel<There<There<Here>>>,
+                                                              Rel<There<There<There<Here>>>>>,
+                                                         Lambda<Rel<There<There<There<Here>>>>,
+                                                                App<Rel<There<Here>>, Rel<Here>>>>>,
+                                              Rel<Here>>,
+                                       App<Rel<Here>,
+                                           Lambda<Prod<Rel<There<There<Here>>>,
+                                                       Rel<There<There<There<Here>>>>>,
+                                                  Rel<Here>>
+                                          >
+                                      >
+                                  >,
+                            _,
+                            _>();
         /* // Correctly fails (not convertible):
         MyContext::<Hlist![Decl<Prod<Sort<Set>, Sort<Set>>,
                                 Sort<Type>>,
                            Assum<Sort<Set>>]>::
             my_conv::<Rel<Here>,
                       Prod<App<Lambda<Sort<Set>, Prod<Rel<There<Here>>, Rel<There<There<Here>>>>>, Rel<There<Here>>>, Sort<Set>>>(); */
-        /*Sort<Set>*/
-        //
-        // [Γ] (λ : t . b) 〜> [%1 Γ] b
-        // e 〜> ([^1 ∘ END] b) 1
-        // e = [Γ] (λ : t . b) 〜>
-        // e = ([^1 ∘ END] ([Γ] (λ : t . b))) 1 〜>
-        //     [(^1 ∘ Γ).1] b =
-        //     [%1 Γ] b
     }
 }
