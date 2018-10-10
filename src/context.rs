@@ -1697,6 +1697,8 @@ pub trait CCnv<CvPb, Lfts1, Lfts2, Term1, Term2> {
 }
 
 /// Conversion between [lft1](stk1 ⊢ v1) and [lft2](stk2 ⊢ v2)
+///
+/// NOTE: Expects both sides to already be in WHNF!
 pub trait EqAppr<CvPb, Lfts1, V1, Stk1, Lfts2, V2, Stk2> {
 }
 
@@ -1961,11 +1963,7 @@ macro_rules! impl_eqappr_fflex_lhs {
 }
 
 impl_eqappr_fflex_lhs!([S], FVal<Sort<S>>);
-// NOTE: It seems clear that FFlex cannot ever reduce to a FRel, since each decl in the
-// environment should be closed over all previous decls in that environment, but Rel means
-// a free variable within the current substitution environment (i.e. a lifted variable)
-// which necessarily comes after the decls.
-// impl_eqappr_fflex_lhs!([N], FVal<Rel<N>>);
+impl_eqappr_fflex_lhs!([N], FVal<Rel<N>>);
 // NOTE: Lambdas come first in Coq's reduction.
 // impl_eqappr_fflex_lhs!([T, C, E], FCbn<Lambda<T, C>, E>);
 impl_eqappr_fflex_lhs!([T, C, E], FCbn<Prod<T, C>, E>);
@@ -1987,11 +1985,7 @@ macro_rules! impl_eqappr_fflex_rhs {
 }
 
 impl_eqappr_fflex_rhs!([S], FVal<Sort<S>>);
-// NOTE: It seems clear that FFlex cannot ever reduce to a FRel, since each decl in the
-// environment should be closed over all previous decls in that environment, but Rel means
-// a free variable within the current substitution environment (i.e. a lifted variable)
-// which necessarily comes after the decls.
-// impl_eqappr_fflex_rhs!([N], FVal<Rel<N>>);
+impl_eqappr_fflex_rhs!([N], FVal<Rel<N>>);
 // NOTE: Lambdas come first in Coq's reduction.
 // impl_eqappr_fflex_rhs!([T, C, E], FCbn<Lambda<T, C>, E>);
 impl_eqappr_fflex_rhs!([T, C, E], FCbn<Prod<T, C>, E>);
