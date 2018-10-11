@@ -1621,18 +1621,47 @@ impl<Lfts, A, Stk> PureStack<Lfts> for HCons<ZApp<A>, Stk> {
 
 /// Reduction functions
 
-pub trait WhdAll<Ctx> {
-    type Output;
+/// Macro for generating boilerplate trait impls for Whd (first list is of constrs that are already
+/// in whd for the current reduction strategy, second list is for constrs that are not and need to
+/// be reduced).
+/// TODO: Find a way to generalize this sort of macro.
+macro_rules! impl_whd {
+    ($whd_trait:ident, $red_flags:ty,
+     [$(([$($whnf_param:ident),*], $whnf_constr:ty)),*],
+     [$(([$($red_param:ident),*], $red_constr:ty)),*]
+    ) => {
+        pub trait $whd_trait<Ctx> {
+            type Output;
+        }
+        $(
+            impl<$($whnf_param, )*Ctx> $whd_trait<Ctx> for $whnf_constr {
+                type Output = $whnf_constr;
+            }
+        )*
+        $(
+            /* impl<$($red_param, )*Ctx> $whd_trait<Ctx> for $red_constr {
+                type Output = $red_constr;
+            } */
+            impl<$($red_param, )*Ctx> $whd_trait<Ctx> for $red_constr
+                where
+                    Ctx : CreateClosInfos<$red_flags>,
+                    $red_constr : Inject,
+                    <Ctx as CreateClosInfos<$red_flags>>::Info :
+                        WhdVal<<$red_constr as Inject>::Output>,
+            {
+                type Output = <<Ctx as CreateClosInfos<$red_flags>>::Info
+                               as WhdVal<<$red_constr as Inject>::Output>>::Output;
+            }
+        )*
+    }
 }
 
-impl<Term, Ctx> WhdAll<Ctx> for Term
-    where
-        Ctx : CreateClosInfos<BetaDeltaIota>,
-        Term : Inject,
-        <Ctx as CreateClosInfos<BetaDeltaIota>>::Info : WhdVal<Term::Output>,
-{
-    type Output = <<Ctx as CreateClosInfos<BetaDeltaIota>>::Info as WhdVal<Term::Output>>::Output;
-}
+impl_whd!(WhdAll, BetaDeltaIota,
+          [([S], Sort<S>),
+           ([T, C], Prod<T, C>),
+           ([T, B], Lambda<T, B>)],
+          [([N], Rel<N>),
+           ([F, A], App<F, A>)]);
 
 /// Conversion
 
@@ -2449,7 +2478,8 @@ mod test {
             my_judge_type::<Rel<Here>, Prod<Rel<There<Here>>, Rel<There<There<Here>>>>, Set>();
         // Beelow should error: roughly equivalent to forall (X : Set) (Y : X), Y, which (in Coq)
         // errors with `the term "Y" has type "X" which should be Set, Prop or Type.`
-        // Ctx::my_judge::<Prod<Rel<Here>, Rel<Here>>, Sort<Type>>();
+        // Ctx::my_judge_type::<Prod<Rel<Here>, Rel<Here>>, Sort<Type>, Set>();
+        Ctx::my_judge_sort::<Prod<Rel<Here>, Rel<Here>>, Type>();
         Ctx::my_judge_sort::<Prod<Sort<Set>, Rel<Here>>, Type>();
         Ctx::my_judge_sort::<Prod<Sort<Set>, Sort<Set>>, Type>();
         Ctx::my_judge_sort::<Prod<Rel<There<Here>>, Sort<Set>>, Type>();
@@ -2563,7 +2593,7 @@ mod test {
                                       >
                                   >>,
                             _,
-                            _>();
+                            Set>();
         // X : Set, Y : (X → X) → Set ⊢
         //  λ f : (∀ x : X → X . Y x) .
         //      (λ y : (Y (λ (z : X) . z)) . y)
@@ -2584,7 +2614,7 @@ mod test {
                                       >
                                   >,
                             _,
-                            _>();
+                            Set>();
         // Requires conversion to be implemented for Set : Type, and flex on lhs.
         // (Note: not sure whether we can actually trigger this conversion with just one universe?)
         MyContext::<Hlist![Decl<Sort<Set>, Sort<Type>>]>::
@@ -2622,7 +2652,7 @@ mod test {
                                       >
                                   >,
                             _,
-                            _>();
+                            Set>();
         // Requires conversion to be implemented for lambdas on rhs (eta expansion)
         // X : Set, Y : ((X → X) → X → X) → Set ⊢
         //  λ f : (∀ x : (X → X) → X → X . Y x) .
@@ -2650,7 +2680,7 @@ mod test {
                                       >
                                   >,
                             _,
-                            _>();
+                            Set>();
         /* // Correctly fails (not convertible):
         MyContext::<Hlist![Decl<Prod<Sort<Set>, Sort<Set>>,
                                 Sort<Type>>,
