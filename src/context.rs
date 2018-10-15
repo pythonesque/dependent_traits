@@ -47,6 +47,28 @@ pub trait Equal<T> {
 impl<T> Equal<T> for T {
 }
 
+/// EqNat : specialized version of equality that returns a boolean instead of succeeding or
+/// failing.
+pub trait EqNat<N> {
+    type Conv;
+}
+
+impl EqNat<Here> for Here {
+    type Conv = True;
+}
+
+impl<N1> EqNat<Here> for There<N1> {
+    type Conv = False;
+}
+
+impl<N2> EqNat<There<N2>> for Here {
+    type Conv = False;
+}
+
+impl<N1, N2> EqNat<There<N2>> for There<N1> where N1 : EqNat<N2> {
+    type Conv = N1::Conv;
+}
+
 pub trait AtIndex<Index>/* : Selector<Self::Output, Index>*/
 {
     type Output;
@@ -1669,10 +1691,12 @@ impl_whd!(WhdAll, BetaDeltaIota,
 
 /// Self is Infos; only needs to deal with pure stack members.
 pub trait CompareStacks<Lft1, Stk1, Lft2, Stk2> {
+    type Conv;
 }
 
 /// Empty stacks are equal.
 impl<Lft1, Lft2, Info> CompareStacks<Lft1, HNil, Lft2, HNil> for Info {
+    type Conv = True;
 }
 
 /// App stacks are equal if the terms are convertible.
@@ -1682,11 +1706,33 @@ impl<Lft1, A1, Stk1, Lft2, A2, Stk2, Info> CompareStacks<Lft1, HCons<ZApp<A1>, S
         Info : CCnv<PbConv, Lft1, Lft2, A1, A2>,
         Stk1 : PureStack<Lft1>,
         Stk2 : PureStack<Lft2>,
+        // NOTE: Might be nice to make this run only if member equality succeeds.
         Info : CompareStacks<<Stk1 as PureStack<Lft1>>::Lfts,
                              <Stk1 as PureStack<Lft1>>::Stack,
                              <Stk2 as PureStack<Lft2>>::Lfts,
                              <Stk2 as PureStack<Lft2>>::Stack>,
+        <Info as CCnv<PbConv, Lft1, Lft2, A1, A2>>::Conv :
+            IAnd<<Info as CompareStacks<<Stk1 as PureStack<Lft1>>::Lfts,
+                                        <Stk1 as PureStack<Lft1>>::Stack,
+                                        <Stk2 as PureStack<Lft2>>::Lfts,
+                                        <Stk2 as PureStack<Lft2>>::Stack>>::Conv>,
 {
+    type Conv =
+        <<Info as CCnv<PbConv, Lft1, Lft2, A1, A2>>::Conv as
+         IAnd<<Info as CompareStacks<<Stk1 as PureStack<Lft1>>::Lfts,
+                                     <Stk1 as PureStack<Lft1>>::Stack,
+                                     <Stk2 as PureStack<Lft2>>::Lfts,
+                                     <Stk2 as PureStack<Lft2>>::Stack>>::Conv>>::Output;
+}
+
+/// Nonempty Stk1 ≠ empty Stk2
+impl<Lft1, M, Stk1, Lft2, Info> CompareStacks<Lft1, HCons<M, Stk1>, Lft2, HNil> for Info {
+    type Conv = False;
+}
+
+/// Empty Stk1 ≠ nonempty Stk2
+impl<Lft1, Lft2, M, Stk2, Info> CompareStacks<Lft1, HNil, Lft2, HCons<M, Stk2>> for Info {
+    type Conv = False;
 }
 
 /// Convertibility of sorts
@@ -1697,20 +1743,20 @@ pub struct PbCumul;
 
 /// S0 ~ S1 using conversion strategy Self
 pub trait SortCmp<S0, S1> {
-    // type Conv;
+    type Conv;
 }
 
 /// Syntactically equal sorts are equal for any conversion strategy.
 impl<Pb, S> SortCmp<S, S> for Pb {
-    // type Conv = True;
+    type Conv = True;
 }
 
 /// Set is convertible with Type where conversion is cumulative.
 impl SortCmp<Set, Type> for PbCumul {
-    // type Conv = True;
+    type Conv = True;
 }
 
-/* /// Set is not convertible with Type where conversion is exact.
+/// Set is not convertible with Type where conversion is exact.
 impl SortCmp<Set, Type> for PbConv {
     type Conv = False;
 }
@@ -1718,20 +1764,22 @@ impl SortCmp<Set, Type> for PbConv {
 /// Type is never convertible with Set.
 impl<Pb> SortCmp<Type, Set> for Pb {
     type Conv = False;
-} */
+}
 
 /// Conversion between [lft1]term1 and [lft2]term2
 pub trait CCnv<CvPb, Lfts1, Lfts2, Term1, Term2> {
-    // type Conv;
+    type Conv;
 }
 
 /// Conversion between [lft1](stk1 ⊢ v1) and [lft2](stk2 ⊢ v2)
 ///
 /// NOTE: Expects both sides to already be in WHNF!
 pub trait EqAppr<CvPb, Lfts1, V1, Stk1, Lfts2, V2, Stk2> {
+    type Conv;
 }
 
 pub trait ConvertStacks<Lft1, Lft2, Stk1, Stk2> {
+    type Conv;
 }
 
 impl<CvPb, Lfts1, Lfts2, Term1, Term2, Info> CCnv<CvPb, Lfts1, Lfts2, Term1, Term2> for Info
@@ -1743,51 +1791,58 @@ impl<CvPb, Lfts1, Lfts2, Term1, Term2, Info> CCnv<CvPb, Lfts1, Lfts2, Term1, Ter
                             Lfts2, <Info as WhdStack<Term2, HNil>>::Head,
                                    <Info as WhdStack<Term2, HNil>>::Stack>,
 {
-    // type Conv = Info::Conv;
+    type Conv = Info::Conv;
 }
 
 /// Conversion between [lft1](stk1 ⊢ v1 = ref_value_cache fl1', fl1 = FFlex fl1') and
-///                    [lft2](stk2 ⊢ v2 = ref_value_cache fl2', fl2 = FFlex fl2')
+///                    [lft2](stk2 ⊢ v2 = ref_value_cache fl2', fl2 = FFlex fl2') and
+///                    either v1 ≠ v2 or stk1 ≠ stk2
 ///
 /// (can also be used in general to reduce one side or the other after computation).
-pub trait EqApprFlex<CvPb, Lfts1, Fl1, V1, Stk1, Lfts2, Fl2, V2, Stk2> {
-    // type Conv;
+pub trait EqApprFlex3<CvPb, Lfts1, Fl1, V1, Stk1, Lfts2, Fl2, V2, Stk2> {
+    type Conv;
 }
 
-/// Both None : Fl1 and Fl2 must be syntactically equal, and their stacks must be convertible.
-impl<CvPb, Lfts1, Fl, Stk1, Lfts2, Stk2, Info>
-    EqApprFlex<CvPb, Lfts1, Fl, TNone, Stk1, Lfts2, Fl, TNone, Stk2> for Info
-    where
-        Info : ConvertStacks<Lfts1, Lfts2, Stk1, Stk2>,
-{
-    // type Conv = True;
+/// Both None : N1 and N2 must either not be syntactically equal, or their stacks must
+/// are not convertible, so the terms cannot be convertible.
+impl<CvPb, Lfts1, Fl1, Stk1, Lfts2, Fl2, Stk2, Info>
+    EqApprFlex3<CvPb, Lfts1, Fl1, TNone, Stk1, Lfts2, Fl2, TNone, Stk2> for Info {
+    type Conv = False;
 }
 
 /// Fl1 = Some, Fl2 = None : reduce V1 and recompare.
 impl<CvPb, Lfts1, Fl1, V1, Stk1, Lfts2, Fl2, Stk2, Info>
-    EqApprFlex<CvPb, Lfts1, Fl1, TSome<V1>, Stk1, Lfts2, Fl2, TNone, Stk2> for Info
+    EqApprFlex3<CvPb, Lfts1, Fl1, TSome<V1>, Stk1, Lfts2, Fl2, TNone, Stk2> for Info
     where
         Info : WhdStack<V1, Stk1>,
         Info : EqAppr<CvPb, Lfts1, <Info as WhdStack<V1, Stk1>>::Head,
                                    <Info as WhdStack<V1, Stk1>>::Stack,
                             Lfts2, Fl2, Stk2>,
 {
+    type Conv =
+        <Info as EqAppr<CvPb, Lfts1, <Info as WhdStack<V1, Stk1>>::Head,
+                                     <Info as WhdStack<V1, Stk1>>::Stack,
+                              Lfts2, Fl2, Stk2>>::Conv;
 }
 
 /// Fl1 = None, Fl2 = Some : reduce V2 and recompare.
 impl<CvPb, Lfts1, Fl1, Stk1, Lfts2, Fl2, V2, Stk2, Info>
-    EqApprFlex<CvPb, Lfts1, Fl1, TNone, Stk1, Lfts2, Fl2, TSome<V2>, Stk2> for Info
+    EqApprFlex3<CvPb, Lfts1, Fl1, TNone, Stk1, Lfts2, Fl2, TSome<V2>, Stk2> for Info
     where
         Info : WhdStack<V2, Stk2>,
         Info : EqAppr<CvPb, Lfts1, Fl1, Stk1,
                             Lfts2, <Info as WhdStack<V2, Stk2>>::Head,
                                    <Info as WhdStack<V2, Stk2>>::Stack>
 {
+    type Conv =
+        <Info as EqAppr<CvPb, Lfts1, Fl1, Stk1,
+                              Lfts2, <Info as WhdStack<V2, Stk2>>::Head,
+                                     <Info as WhdStack<V2, Stk2>>::Stack>>::Conv;
 }
 
 /// Both Some : reduce both sides and recompare.
 impl<CvPb, Lfts1, Fl1, V1, Stk1, Lfts2, Fl2, V2, Stk2, Info>
-    EqApprFlex<CvPb, Lfts1, Fl1, TSome<V1>, Stk1, Lfts2, Fl2, TSome<V2>, Stk2> for Info
+    EqApprFlex3<CvPb, Lfts1, Fl1, TSome<V1>, Stk1, Lfts2, Fl2, TSome<V2>, Stk2> for Info
     where
         Info : WhdStack<V1, Stk1>,
         Info : WhdStack<V2, Stk2>,
@@ -1796,13 +1851,108 @@ impl<CvPb, Lfts1, Fl1, V1, Stk1, Lfts2, Fl2, V2, Stk2, Info>
                             Lfts2, <Info as WhdStack<V2, Stk2>>::Head,
                                    <Info as WhdStack<V2, Stk2>>::Stack>,
 {
+    type Conv =
+        <Info as EqAppr<CvPb, Lfts1, <Info as WhdStack<V1, Stk1>>::Head,
+                                     <Info as WhdStack<V1, Stk1>>::Stack,
+                              Lfts2, <Info as WhdStack<V2, Stk2>>::Head,
+                                     <Info as WhdStack<V2, Stk2>>::Stack>>::Conv;
+}
+
+/// Conversion between [lft1](stk1 ⊢ FFlex fl1) and
+///                    [lft2](stk2 ⊢ FFlex fl2) where
+///                    (fl1 == fl2) == True and
+///                    (stk1 == stk2) == StkEq and
+///
+/// (can also be used in general to reduce one side or the other after computation).
+pub trait EqApprFlex2<CvPb, Lfts1, Fl1, Stk1, Lfts2, Fl2, Stk2, StkEq> {
+    type Conv;
+}
+
+/// Not equal : Stk1 ≠ Stk2, so try looking up Fl1 and Fl2 before resuming reduction.
+impl<CvPb, Lfts1, Fl1, Stk1, Lfts2, Fl2, Stk2, Info>
+    EqApprFlex2<CvPb, Lfts1, Fl1, Stk1, Lfts2, Fl2, Stk2, False> for Info
+    where
+        Info : RefValueCache<Fl1>,
+        Info : RefValueCache<Fl2>,
+        Info : EqApprFlex3<CvPb, Lfts1, FFlex<Fl1>, <Info as RefValueCache<Fl1>>::Output, Stk1,
+                           Lfts2, FFlex<Fl2>, <Info as RefValueCache<Fl2>>::Output, Stk2>,
+{
+    type Conv =
+        <Info as EqApprFlex3<CvPb, Lfts1, FFlex<Fl1>, <Info as RefValueCache<Fl1>>::Output, Stk1,
+                             Lfts2, FFlex<Fl2>, <Info as RefValueCache<Fl2>>::Output, Stk2>>::Conv;
+}
+
+/// Both equal : Stk1 = Stk2, so the terms are convertible.
+impl<CvPb, Lfts1, Fl1, Stk1, Lfts2, Fl2, Stk2, Info>
+    EqApprFlex2<CvPb, Lfts1, Fl1, Stk1, Lfts2, Fl2, Stk2, True> for Info {
+    type Conv = True;
+}
+
+/// Conversion between [lft1](stk1 ⊢ FFlex fl1) and
+///                    [lft2](stk2 ⊢ FFlex fl2) where
+///                    (fl1 == fl2) == FlEq
+///
+/// (can also be used in general to reduce one side or the other after computation).
+pub trait EqApprFlex<CvPb, Lfts1, Fl1, Stk1, Lfts2, Fl2, Stk2, FlEq> {
+    type Conv;
+}
+
+/// Not equal : Fl1 and Fl2 are not syntactically equal, so try looking them up before resuming
+/// reduction.
+impl<CvPb, Lfts1, Fl1, Stk1, Lfts2, Fl2, Stk2, Info>
+    EqApprFlex<CvPb, Lfts1, Fl1, Stk1, Lfts2, Fl2, Stk2, False> for Info
+    where
+        Info : RefValueCache<Fl1>,
+        Info : RefValueCache<Fl2>,
+        Info : EqApprFlex3<CvPb, Lfts1, FFlex<Fl1>, <Info as RefValueCache<Fl1>>::Output, Stk1,
+                           Lfts2, FFlex<Fl2>, <Info as RefValueCache<Fl2>>::Output, Stk2>,
+{
+    type Conv =
+        <Info as EqApprFlex3<CvPb, Lfts1, FFlex<Fl1>, <Info as RefValueCache<Fl1>>::Output, Stk1,
+                             Lfts2, FFlex<Fl2>, <Info as RefValueCache<Fl2>>::Output, Stk2>>::Conv;
+}
+
+/// Both equal : Fl1 and Fl2 are syntactically equal, so try converting their stacks.
+impl<CvPb, Lfts1, Fl1, Stk1, Lfts2, Fl2, Stk2, Info>
+    EqApprFlex<CvPb, Lfts1, Fl1, Stk1, Lfts2, Fl2, Stk2, True> for Info
+    where
+        Info : ConvertStacks<Lfts1, Lfts2, Stk1, Stk2>,
+        Info : EqApprFlex2<CvPb, Lfts1, Fl1, Stk1, Lfts2, Fl2, Stk2,
+                           <Info as ConvertStacks<Lfts1, Lfts2, Stk1, Stk2>>::Conv>
+{
+    type Conv = <Info as
+                 EqApprFlex2<CvPb, Lfts1, Fl1, Stk1, Lfts2, Fl2, Stk2,
+                             <Info as ConvertStacks<Lfts1, Lfts2, Stk1, Stk2>>::Conv>>::Conv;
+}
+
+/// Macro for generating boilerplate trait impls for EqAppr where the two sides are never
+/// convertible.
+/// TODO: Find a way to generalize this sort of macro.
+macro_rules! impl_eqappr_false {
+    ([$($param1:ident),*], $constr1:ty, [$($param2:ident),*], $constr2:ty) => {
+        impl<CvPb, Lfts1, $($param1, )*Stk1, Lfts2, $($param2, )*Stk2, Info>
+            EqAppr<CvPb, Lfts1, $constr1, Stk1, Lfts2, $constr2, Stk2> for Info
+        {
+            type Conv = False;
+        }
+    }
 }
 
 /// NOTE: The pure version of Stk1 and Stk2 is necessarily empty if the term typechecked
 impl<CvPb, Lfts1, S1, Stk1, Lfts2, S2, Stk2, Info>
     EqAppr<CvPb, Lfts1, FVal<Sort<S1>>, Stk1, Lfts2, FVal<Sort<S2>>, Stk2> for Info
-    where CvPb : SortCmp<S1, S2> {
+    where CvPb : SortCmp<S1, S2>
+{
+    type Conv = CvPb::Conv;
 }
+
+/// All the remaining terms that can't compare to Sorts: Rel, Lambda, Prod.
+impl_eqappr_false!([S], FVal<Sort<S>>, [N], FVal<Rel<N>>);
+impl_eqappr_false!([S], FVal<Sort<S>>, [T, B, E], FCbn<Lambda<T, B>, E>);
+impl_eqappr_false!([S], FVal<Sort<S>>, [T, C, E], FCbn<Prod<T, C>, E>);
+impl_eqappr_false!([N], FVal<Rel<N>>, [S], FVal<Sort<S>>);
+impl_eqappr_false!([T, B, E], FCbn<Lambda<T, B>, E>, [S], FVal<Sort<S>>);
+impl_eqappr_false!([T, C, E], FCbn<Prod<T, C>, E>, [S], FVal<Sort<S>>);
 
 /// Normal rels (which have no associated body) compare equal only if they are equal in this lift
 /// environment and their stacks are equal.
@@ -1814,26 +1964,42 @@ impl<CvPb, Lfts1, N1, Stk1, Lfts2, N2, Stk2, Info>
         <Stk1 as ElStack<Lfts1>>::Output : RelocRel<N1>,
         <Stk2 as ElStack<Lfts2>>::Output : RelocRel<N2>,
         <<Stk1 as ElStack<Lfts1>>::Output as RelocRel<N1>>::Output :
-            Equal<<<Stk2 as ElStack<Lfts2>>::Output as RelocRel<N2>>::Output>,
+            EqNat<<<Stk2 as ElStack<Lfts2>>::Output as RelocRel<N2>>::Output>,
+        // NOTE: Should probably make this run only if EqNat succeeds.
         Info : ConvertStacks<Lfts1, Lfts2, Stk1, Stk2>,
+        <<<Stk1 as ElStack<Lfts1>>::Output as RelocRel<N1>>::Output as
+            EqNat<<<Stk2 as ElStack<Lfts2>>::Output as RelocRel<N2>>::Output>>::Conv :
+            IAnd<<Info as ConvertStacks<Lfts1, Lfts2, Stk1, Stk2>>::Conv>,
 {
+    type Conv =
+        <<<<Stk1 as ElStack<Lfts1>>::Output as RelocRel<N1>>::Output as
+            EqNat<<<Stk2 as ElStack<Lfts2>>::Output as RelocRel<N2>>::Output>>::Conv as
+         IAnd<<Info as ConvertStacks<Lfts1, Lfts2, Stk1, Stk2>>::Conv>>::Output;
 }
+
+/// All the remaining terms that can't compare to Rels: Prod.
+impl_eqappr_false!([N], FVal<Rel<N>>, [T, C, E], FCbn<Prod<T, C>, E>);
+impl_eqappr_false!([T, C, E], FCbn<Prod<T, C>, E>, [N], FVal<Rel<N>>);
 
 /// Flexes compare equal only if they are equal (no lift is needed, since we can evaluate them
 /// in the shared environment) and their stacks are equal, or they evaluate to equal terms.
-/// The second subsumes the first, so for now we just always reduce both sides, but for
-/// efficiency we may want to check the first before the second (we also want to try reducing
-/// one side at a time, e.g. the first before the second, according to some oracle order, and
-/// then rechecking, in case we get lucky and arrive at a syntactic equality).
-impl<CvPb, Lfts1, Fl1, Stk1, Lfts2, Fl2, Stk2, Info>
-    EqAppr<CvPb, Lfts1, FFlex<Fl1>, Stk1, Lfts2, FFlex<Fl2>, Stk2> for Info
+/// When we add constants, we want to try reducing one side at a time, e.g. the first before
+/// the second, according to some oracle order, and then rechecking, in case we get lucky and
+/// arrive at a syntactic equality.
+///
+/// Note: currently, no terms are considered incomparable to Flex.
+impl<CvPb, Lfts1, N1, Stk1, Lfts2, N2, Stk2, Info>
+    EqAppr<CvPb, Lfts1, FFlex<Rel<N1>>, Stk1, Lfts2, FFlex<Rel<N2>>, Stk2> for Info
     where
-        Info : RefValueCache<Fl1>,
-        Info : RefValueCache<Fl2>,
-        Info : EqApprFlex<CvPb, Lfts1, FFlex<Fl1>, <Info as RefValueCache<Fl1>>::Output, Stk1,
-                          Lfts2, FFlex<Fl2>, <Info as RefValueCache<Fl2>>::Output, Stk2>,
+        N1 : EqNat<N2>,
+        Info : EqApprFlex<CvPb, Lfts1, Rel<N1>, Stk1, Lfts2, Rel<N2>, Stk2,
+                          <N1 as EqNat<N2>>::Conv>,
 {
+    type Conv =
+        <Info as EqApprFlex<CvPb, Lfts1, Rel<N1>, Stk1, Lfts2, Rel<N2>, Stk2,
+                            <N1 as EqNat<N2>>::Conv>>::Conv;
 }
+
 
 /// Lambdas compare equal when their types compare equal and their bodies compare equal in the
 /// lifted environment.
@@ -1855,11 +2021,29 @@ impl<CvPb, Lfts1, T1, B1, E1, /*Stk1, */Lfts2, T2, B2, E2, /*Stk2, */Info>
         E2 : SubsLift,
         B1 : MkClos<<E1 as SubsLift>::Output>,
         B2 : MkClos<<E2 as SubsLift>::Output>,
+        // NOTE: Might be nice to make this run only if type equality succeeds.
         Info : CCnv<PbConv, <Lfts1 as ELift>::Output, <Lfts2 as ELift>::Output,
                             <B1 as MkClos<<E1 as SubsLift>::Output>>::Output,
                             <B2 as MkClos<<E2 as SubsLift>::Output>>::Output>,
+        <Info as
+         CCnv<PbConv, Lfts1, Lfts2,
+              <T1 as MkClos<E1>>::Output, <T2 as MkClos<E2>>::Output>>::Conv :
+            IAnd<<Info as CCnv<PbConv, <Lfts1 as ELift>::Output, <Lfts2 as ELift>::Output,
+                                       <B1 as MkClos<<E1 as SubsLift>::Output>>::Output,
+                                       <B2 as MkClos<<E2 as SubsLift>::Output>>::Output>>::Conv>,
 {
+    type Conv =
+        <<Info as
+          CCnv<PbConv, Lfts1, Lfts2,
+               <T1 as MkClos<E1>>::Output, <T2 as MkClos<E2>>::Output>>::Conv as
+          IAnd<<Info as CCnv<PbConv, <Lfts1 as ELift>::Output, <Lfts2 as ELift>::Output,
+                             <B1 as MkClos<<E1 as SubsLift>::Output>>::Output,
+                             <B2 as MkClos<<E2 as SubsLift>::Output>>::Output>>::Conv>>::Output;
 }
+
+/// All the remaining terms that can't compare to Lambda: Prod.
+impl_eqappr_false!([T1, B1, E1], FCbn<Lambda<T1, B1>, E1>, [T2, C2, E2], FCbn<Prod<T2, C2>, E2>);
+impl_eqappr_false!([T1, C1, E1], FCbn<Prod<T1, C1>, E1>, [T2, B2, E2], FCbn<Lambda<T2, B2>, E2>);
 
 /// Products compare equal when their types compare equal and their bodies compare equal in the
 /// lifted environment.
@@ -1870,6 +2054,8 @@ impl<CvPb, Lfts1, T1, B1, E1, /*Stk1, */Lfts2, T2, B2, E2, /*Stk2, */Info>
 ///
 /// NOTE: The types of the Cs are converted exactly but the dependent types are converted according
 ///       to the current strategy.
+///
+/// Note: currently, no remaining terms are considered incomparable to Prod.
 impl<CvPb, Lfts1, T1, C1, E1, Stk1, Lfts2, T2, C2, E2, Stk2, Info>
     EqAppr<CvPb, Lfts1, FCbn<Prod<T1, C1>, E1>, Stk1,
                  Lfts2, FCbn<Prod<T2, C2>, E2>, Stk2> for Info
@@ -1890,11 +2076,28 @@ impl<CvPb, Lfts1, T1, C1, E1, Stk1, Lfts2, T2, C2, E2, Stk2, Info>
         E2 : SubsLift,
         C1 : MkClos<<E1 as SubsLift>::Output>,
         C2 : MkClos<<E2 as SubsLift>::Output>,
+        // NOTE: Might be nice to make this run only if type equality succeeds.
         Info : CCnv<CvPb, <<Stk1 as ElStack<Lfts1>>::Output as ELift>::Output,
                           <<Stk2 as ElStack<Lfts2>>::Output as ELift>::Output,
                           <C1 as MkClos<<E1 as SubsLift>::Output>>::Output,
                           <C2 as MkClos<<E2 as SubsLift>::Output>>::Output>,
+        <Info as
+         CCnv<PbConv, <Stk1 as ElStack<Lfts1>>::Output, <Stk2 as ElStack<Lfts2>>::Output,
+                      <T1 as MkClos<E1>>::Output, <T2 as MkClos<E2>>::Output>>::Conv :
+            IAnd<<Info as CCnv<CvPb, <<Stk1 as ElStack<Lfts1>>::Output as ELift>::Output,
+                                     <<Stk2 as ElStack<Lfts2>>::Output as ELift>::Output,
+                                     <C1 as MkClos<<E1 as SubsLift>::Output>>::Output,
+                                     <C2 as MkClos<<E2 as SubsLift>::Output>>::Output>>::Conv>,
+
 {
+    type Conv =
+        <<Info as
+          CCnv<PbConv, <Stk1 as ElStack<Lfts1>>::Output, <Stk2 as ElStack<Lfts2>>::Output,
+                       <T1 as MkClos<E1>>::Output, <T2 as MkClos<E2>>::Output>>::Conv as
+             IAnd<<Info as CCnv<CvPb, <<Stk1 as ElStack<Lfts1>>::Output as ELift>::Output,
+                                <<Stk2 as ElStack<Lfts2>>::Output as ELift>::Output,
+                                <C1 as MkClos<<E1 as SubsLift>::Output>>::Output,
+                                <C2 as MkClos<<E2 as SubsLift>::Output>>::Output>>::Conv>>::Output;
 }
 
 /// Macro for generating boilerplate trait impls for EqAppr with FLambda only on the left side.
@@ -1919,12 +2122,18 @@ macro_rules! impl_eqappr_flambda_lhs {
                 B1 : MkClos<<E1 as SubsLift>::Output>,
                 Stk2 : EtaExpandStack,
                 // We call EqApprFlex just to reduce both sides before recursing.
-                Info : EqApprFlex<PbConv, <Lfts1 as ELift>::Output, (),
-                                          TSome<<B1 as MkClos<<E1 as SubsLift>::Output>>::Output>,
-                                          HNil,
-                                          <Lfts2 as ELift>::Output, (),
-                                          TSome<$constr>, <Stk2 as EtaExpandStack>::Output>,
+                Info : EqApprFlex3<PbConv, <Lfts1 as ELift>::Output, (),
+                                           TSome<<B1 as MkClos<<E1 as SubsLift>::Output>>::Output>,
+                                           HNil,
+                                           <Lfts2 as ELift>::Output, (),
+                                           TSome<$constr>, <Stk2 as EtaExpandStack>::Output>,
         {
+            type Conv =
+                <Info as EqApprFlex3<PbConv, <Lfts1 as ELift>::Output, (),
+                                     TSome<<B1 as MkClos<<E1 as SubsLift>::Output>>::Output>,
+                                     HNil,
+                                     <Lfts2 as ELift>::Output, (),
+                                     TSome<$constr>, <Stk2 as EtaExpandStack>::Output>>::Conv;
         }
     }
 }
@@ -1958,12 +2167,18 @@ macro_rules! impl_eqappr_flambda_rhs {
                 B2 : MkClos<<E2 as SubsLift>::Output>,
                 Stk1 : EtaExpandStack,
                 // We call EqApprFlex just to reduce both sides before recursing.
-                Info : EqApprFlex<PbConv, <Lfts1 as ELift>::Output, (),
-                                          TSome<$constr>, <Stk1 as EtaExpandStack>::Output,
-                                          <Lfts2 as ELift>::Output, (),
-                                          TSome<<B2 as MkClos<<E2 as SubsLift>::Output>>::Output>,
-                                          HNil>,
+                Info : EqApprFlex3<PbConv, <Lfts1 as ELift>::Output, (),
+                                           TSome<$constr>, <Stk1 as EtaExpandStack>::Output,
+                                           <Lfts2 as ELift>::Output, (),
+                                           TSome<<B2 as MkClos<<E2 as SubsLift>::Output>>::Output>,
+                                           HNil>,
         {
+            type Conv =
+                <Info as EqApprFlex3<PbConv, <Lfts1 as ELift>::Output, (),
+                                     TSome<$constr>, <Stk1 as EtaExpandStack>::Output,
+                                     <Lfts2 as ELift>::Output, (),
+                                     TSome<<B2 as MkClos<<E2 as SubsLift>::Output>>::Output>,
+                                     HNil>>::Conv;
         }
     }
 }
@@ -1983,10 +2198,14 @@ macro_rules! impl_eqappr_fflex_lhs {
             EqAppr<CvPb, Lfts1, FFlex<Fl1>, Stk1, Lfts2, $constr, Stk2> for Info
             where
                 Info : RefValueCache<Fl1>,
-                Info : EqApprFlex<CvPb,
-                                  Lfts1, FFlex<Fl1>, <Info as RefValueCache<Fl1>>::Output, Stk1,
-                                  Lfts2, $constr, TNone, Stk2>,
+                Info : EqApprFlex3<CvPb,
+                                   Lfts1, FFlex<Fl1>, <Info as RefValueCache<Fl1>>::Output, Stk1,
+                                   Lfts2, $constr, TNone, Stk2>,
         {
+            type Conv =
+                <Info as EqApprFlex3<CvPb,
+                                     Lfts1, FFlex<Fl1>, <Info as RefValueCache<Fl1>>::Output, Stk1,
+                                     Lfts2, $constr, TNone, Stk2>>::Conv;
         }
     }
 }
@@ -2005,10 +2224,14 @@ macro_rules! impl_eqappr_fflex_rhs {
             EqAppr<CvPb, Lfts1, $constr, Stk1, Lfts2, FFlex<Fl2>, Stk2> for Info
             where
                 Info : RefValueCache<Fl2>,
-                Info : EqApprFlex<CvPb,
-                                  Lfts1, $constr, TNone, Stk1,
-                                  Lfts2, FFlex<Fl2>, <Info as RefValueCache<Fl2>>::Output, Stk2>,
+                Info : EqApprFlex3<CvPb,
+                                   Lfts1, $constr, TNone, Stk1,
+                                   Lfts2, FFlex<Fl2>, <Info as RefValueCache<Fl2>>::Output, Stk2>,
         {
+            type Conv =
+                <Info as EqApprFlex3<CvPb,
+                                     Lfts1, $constr, TNone, Stk1, Lfts2, FFlex<Fl2>,
+                                     <Info as RefValueCache<Fl2>>::Output, Stk2>>::Conv;
         }
     }
 }
@@ -2042,6 +2265,11 @@ impl<Lft1, Lft2, Stk1, Stk2, Info> ConvertStacks<Lft1, Lft2, Stk1, Stk2> for Inf
                              <<Stk2 as IntoReverse>::Output as PureStack<Lft2>>::Lfts,
                              <<Stk2 as IntoReverse>::Output as PureStack<Lft2>>::Stack>
 {
+    type Conv =
+        <Info as CompareStacks<<<Stk1 as IntoReverse>::Output as PureStack<Lft1>>::Lfts,
+                               <<Stk1 as IntoReverse>::Output as PureStack<Lft1>>::Stack,
+                               <<Stk2 as IntoReverse>::Output as PureStack<Lft2>>::Lfts,
+                               <<Stk2 as IntoReverse>::Output as PureStack<Lft2>>::Stack>>::Conv;
 }
 
 pub trait FConv<CvPb, T1, T2> {
@@ -2052,7 +2280,8 @@ impl<CvPb, T1, T2, Ctx> FConv<CvPb, T1, T2> for Ctx
         Ctx : CreateClosInfos<BetaIotaZeta>,
         T1 : Inject,
         T2 : Inject,
-        <Ctx as CreateClosInfos<BetaIotaZeta>>::Info : CCnv<CvPb, ElId, ElId, T1::Output, T2::Output>,
+        <Ctx as CreateClosInfos<BetaIotaZeta>>::Info : CCnv<CvPb, ElId, ElId,
+                                                            T1::Output, T2::Output, Conv=True>,
 {
 }
 
